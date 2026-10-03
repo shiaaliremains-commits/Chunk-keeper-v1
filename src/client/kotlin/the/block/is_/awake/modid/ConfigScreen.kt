@@ -48,6 +48,6 @@ class ConfigScreen(private val parent: Screen?) : Screen(Component.literal("The 
 
     override fun onClose() {
         ModConfig.save()
-        Minecraft.getInstance().setScreen(parent)
+        Minecraft.getInstance().screen = parent
     }
 }

@@ -39,8 +39,6 @@ dependencies {
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 
 	// ModMenu (غيّر النسخة لنسخة تناسب ماينكرافتك من Modrinth)
-	compileOnly("com.terraformersmc:modmenu:3.2.5")
-	runtimeOnly("com.terraformersmc:modmenu:3.2.5")
 }
 
 tasks.processResources {
