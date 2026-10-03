@@ -38,9 +38,12 @@ dependencies {
 	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 
-	// ربط مكتبة ModMenu مع دعم splitEnvironmentSourceSets
-	"modLocalRuntime"("com.terraformersmc:modmenu:3.2.5")
-	"modCompileOnly"("com.terraformersmc:modmenu:3.2.5")
+	// ربط ModMenu بشكل مباشر لتفادي قيود Gradle 9
+	val modCompileOnly = configurations.findByName("modCompileOnly") ?: configurations.create("modCompileOnly")
+	val modLocalRuntime = configurations.findByName("modLocalRuntime") ?: configurations.create("modLocalRuntime")
+
+	modCompileOnly("com.terraformersmc:modmenu:3.2.5")
+	modLocalRuntime("com.terraformersmc:modmenu:3.2.5")
 }
 
 tasks.processResources {
