@@ -29,6 +29,8 @@ import kotlin.math.sin
 object TheblockkeepstickingClient : ClientModInitializer {
     private lateinit var toggleKey: KeyMapping
     private var lastTargetPos: BlockPos? = null
+    private var lastSelectTime = 0L
+    private var lastRemoveTime = 0L
 
     override fun onInitializeClient() {
         val category = KeyMapping.Category.register(
@@ -77,9 +79,14 @@ object TheblockkeepstickingClient : ClientModInitializer {
             WandState.boxes = emptyList()
         }
 
+        // إضافة حماية لمنع تسجيل الضغطة مرتين متتاليات بسرعة
         AttackBlockCallback.EVENT.register { player, level, _, pos, _ ->
             if (level.isClientSide && WandState.clientActive && player.mainHandItem.item == Items.STICK) {
-                ClientPlayNetworking.send(WandActionPayload(WandActionPayload.SELECT, pos))
+                val now = System.currentTimeMillis()
+                if (now - lastSelectTime > 300) {
+                    lastSelectTime = now
+                    ClientPlayNetworking.send(WandActionPayload(WandActionPayload.SELECT, pos))
+                }
                 InteractionResult.FAIL
             } else {
                 InteractionResult.PASS
@@ -90,7 +97,11 @@ object TheblockkeepstickingClient : ClientModInitializer {
             if (level.isClientSide && hand == InteractionHand.MAIN_HAND &&
                 WandState.clientActive && player.mainHandItem.item == Items.STICK
             ) {
-                ClientPlayNetworking.send(WandActionPayload(WandActionPayload.REMOVE, hit.blockPos))
+                val now = System.currentTimeMillis()
+                if (now - lastRemoveTime > 300) {
+                    lastRemoveTime = now
+                    ClientPlayNetworking.send(WandActionPayload(WandActionPayload.REMOVE, hit.blockPos))
+                }
                 InteractionResult.SUCCESS
             } else {
                 InteractionResult.PASS
@@ -98,7 +109,7 @@ object TheblockkeepstickingClient : ClientModInitializer {
         }
     }
 
-    /** Draws solid glass fill + pulsing wireframe borders using Minecraft's Gizmos */
+    /** Draws clean static frames, pulsing ONLY the hover target block */
     private fun drawFrames() {
         val e = 0.004
         val time = System.currentTimeMillis()
@@ -109,16 +120,15 @@ object TheblockkeepstickingClient : ClientModInitializer {
 
         for (b in WandState.boxes) {
             val (lineColor, fillColor) = when (b.kind) {
-                0 -> Pair(0xFF00E5FF.toInt(), 0x2500E5FF.toInt())  // Saved Zone: Cyan line + translucent cyan glass
-                1 -> Pair(0xFFFFD500.toInt(), 0x60FFD500.toInt())  // Corner 1 Marker: Glowing Yellow
-                3 -> Pair(0xFFFF3030.toInt(), 0x40FF3030.toInt())  // Invalid Selection: Red
-                else -> Pair(PULSING_WHITE_LINE, PULSING_WHITE_FILL) // Live Preview
+                0 -> Pair(0xFF00E5FF.toInt(), 0x2000E5FF.toInt())  // Saved Zone: Cyan ثابت بدون نبض
+                1 -> Pair(0xFFFFD500.toInt(), 0x40FFD500.toInt())  // Corner 1: Yellow ثابت بدون نبض
+                2 -> Pair(0xFF55FF55.toInt(), 0x2555FF55.toInt())  // Stretch Preview: Green ثابت
+                3 -> Pair(0xFFFF3030.toInt(), 0x30FF3030.toInt())  // Invalid Stretch: Red ثابت
+                else -> Pair(PULSING_WHITE_LINE, PULSING_WHITE_FILL) // Target Hover Box (النبض باقي فقط هنا)
             }
             val box = AABB(b.x0 - e, b.y0 - e, b.z0 - e, b.x1 + e, b.y1 + e, b.z1 + e)
 
-            // رسم التظليل الزجاجي الشفاف الداخلي
             Gizmos.cuboid(box, GizmoStyle.fill(fillColor)).persistForMillis(50)
-            // رسم الإطار الخارجي المضيء
             Gizmos.cuboid(box, GizmoStyle.stroke(lineColor)).persistForMillis(50)
         }
     }

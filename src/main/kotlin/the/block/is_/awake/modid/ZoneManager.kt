@@ -18,7 +18,7 @@ import net.minecraft.sounds.SoundSource
 import net.minecraft.world.item.Items
 
 /**
- * Server logic of the zone wand with visual, audio, and HUD enhancements.
+ * Server logic for zone wand with accurate stretch-previewing and fixed click double-firing.
  */
 object ZoneManager {
     private const val USE_PARTICLES = false
@@ -60,7 +60,6 @@ object ZoneManager {
 
     private val sessions = HashMap<UUID, Session>()
     private var tickCounter = 0
-    private var particleToggle = false
 
     fun init() {
         ModConfig.load()
@@ -89,7 +88,7 @@ object ZoneManager {
 
     private fun sendHud(player: ServerPlayer, text: String) {
         val msg = Component.literal(text).withStyle(ChatFormatting.AQUA, ChatFormatting.BOLD)
-        player.sendSystemMessage(msg, true) // true = Actionbar HUD
+        player.sendSystemMessage(msg, true)
     }
 
     private fun holdingStick(player: ServerPlayer) = player.mainHandItem.item == Items.STICK
@@ -146,7 +145,7 @@ object ZoneManager {
                 if (first == null) {
                     s.corner = payload.pos
                     level.playSound(null, payload.pos, SoundEvents.NOTE_BLOCK_CHIME.value(), SoundSource.PLAYERS, 0.9f, 1.5f)
-                    say(player, Kind.INFO, "Corner 1 set (${payload.pos.x}, ${payload.pos.z}). Left-click the opposite corner")
+                    say(player, Kind.INFO, "Corner 1 set (${payload.pos.x}, ${payload.pos.z}). Move crosshair & left-click Corner 2")
                     return
                 }
                 s.corner = null
@@ -181,7 +180,6 @@ object ZoneManager {
         save(level, load(level) + zone)
         for (x in zone.minX..zone.maxX) for (z in zone.minZ..zone.maxZ) level.setChunkForced(x, z, true)
         
-        // صوت وتأثير بصري احترافي عند الحفظ
         level.playSound(null, player.blockPosition(), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 1.0f, 1.2f)
         val centerX = ((zone.minX + zone.maxX + 1) * 16) / 2.0
         val centerZ = ((zone.minZ + zone.maxZ + 1) * 16) / 2.0
@@ -208,7 +206,6 @@ object ZoneManager {
             }
         }
 
-        // صوت وتأثير مسح
         level.playSound(null, player.blockPosition(), SoundEvents.UI_STONECUTTER_TAKE_RESULT, SoundSource.PLAYERS, 0.9f, 0.8f)
         level.sendParticles(ParticleTypes.SMOKE, pos.x + 0.5, pos.y + 1.0, pos.z + 0.5, 25, 0.5, 0.5, 0.5, 0.05)
 
@@ -224,24 +221,23 @@ object ZoneManager {
         val y1 = y0 + 40
         val out = ArrayList<WandBox>()
 
+        // 1. Zones المحفوظة باللون الأزرق
         for (z in load(level)) out.add(zoneBox(0, z, y0, y1))
 
         val c1 = s.corner
         val pv = s.preview
+
         if (c1 != null) {
+            // رسم مؤشر الزاوية الأولى (Corner 1) أصفر ثابت
             out.add(WandBox(1, c1.x, c1.y, c1.z, c1.x + 1, c1.y + 1, c1.z + 1))
+
             if (pv != null) {
+                // مَد منطقة الـ Chunk Preview بين الزاوية الأولى والبلوكة التي ينظر إليها اللاعب
                 val zone = Zone.between(c1, pv)
-                val minX = minOf(c1.x, pv.x)
-                val minY = minOf(c1.y, pv.y)
-                val minZ = minOf(c1.z, pv.z)
-                val maxX = maxOf(c1.x, pv.x) + 1
-                val maxY = maxOf(c1.y, pv.y) + 1
-                val maxZ = maxOf(c1.z, pv.z) + 1
-                
-                out.add(WandBox(if (sizeError(zone) == null) 2 else 3, minX, minY, minZ, maxX, maxY, maxZ))
+                out.add(zoneBox(if (sizeError(zone) == null) 2 else 3, zone, y0, y1))
             }
         } else if (pv != null) {
+            // المربع الأبيض الثابت/النابض على البلوكة المحددة قبل البدء
             out.add(WandBox(4, pv.x, pv.y, pv.z, pv.x + 1, pv.y + 1, pv.z + 1))
         }
         return out
@@ -258,13 +254,12 @@ object ZoneManager {
             ServerPlayNetworking.send(player, WandBoxesPayload(text))
         }
 
-        // تحديث Actionbar HUD حي ومباشر
         if (s.active && isHolding) {
             val statusText = if (s.corner != null && s.preview != null) {
                 val z = Zone.between(s.corner!!, s.preview!!)
                 "⚡ Wand: ACTIVE | Selecting: ${z.width()}x${z.depth()} Chunks (${z.width() * 16}x${z.depth() * 16} Blocks)"
             } else if (s.corner != null) {
-                "⚡ Wand: ACTIVE | Corner 1 Set (${s.corner!!.x}, ${s.corner!!.z}) -> Select Corner 2"
+                "⚡ Wand: ACTIVE | Corner 1 Set (${s.corner!!.x}, ${s.corner!!.z}) -> Click Corner 2"
             } else {
                 "⚡ Wand: ACTIVE | Left-Click Corner 1"
             }
@@ -273,7 +268,6 @@ object ZoneManager {
     }
 
     private fun syncAll(server: MinecraftServer) {
-        particleToggle = !particleToggle
         for ((uuid, s) in sessions) {
             if (!s.active) continue
             val player = server.playerList.getPlayer(uuid) ?: continue
