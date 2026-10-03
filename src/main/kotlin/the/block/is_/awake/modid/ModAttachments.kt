@@ -1,4 +1,4 @@
-package the.block.is.awake.modid
+package the.block.is_.awake.modid
 
 import com.mojang.serialization.Codec
 import net.fabricmc.fabric.api.attachment.v1.AttachmentRegistry
@@ -6,7 +6,7 @@ import net.fabricmc.fabric.api.attachment.v1.AttachmentType
 import net.minecraft.resources.Identifier
 
 /**
- * المسار: src/main/kotlin/the/block/is/awake/modid/ModAttachments.kt  (ملف جديد)
+ * المسار: src/main/kotlin/the/block/is_/awake/modid/ModAttachments.kt
  * يخزّن وقت آخر مرة كان فيها الـ Chunk محمّلاً، ويُحفظ تلقائياً مع العالم.
  */
 object ModAttachments {

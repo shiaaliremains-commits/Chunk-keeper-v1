@@ -1,4 +1,4 @@
-package the.block.is.awake.modid
+package the.block.is_.awake.modid
 
 import java.util.ArrayDeque
 import java.util.IdentityHashMap
@@ -16,15 +16,7 @@ import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.level.chunk.LevelChunk
 
 /**
- * المسار: src/main/kotlin/the/block/is/awake/modid/ChunkCatchUp.kt  (استبدل الموجود)
- *
- * التصميم الجديد: نراقب "حالة التشغيل" (ticking) لكل Chunk محمّل.
- *  - يتوقف عن العمل (ابتعدت عنه)  -> نختم الوقت الحالي.
- *  - يرجع يعمل (رجعت له)          -> نحسب الفرق ونطبق Random Ticks + الأفران.
- * يعمل سواء الـ Chunk انحذف من الذاكرة أو بقي محمّلاً بدون tick.
- *
- * الختم (attachment) يعني: "الـ Chunk متوقف عن العمل منذ هذا الوقت".
- * بدون ختم = يعمل حالياً.
+ * المسار: src/main/kotlin/the/block/is_/awake/modid/ChunkCatchUp.kt
  */
 object ChunkCatchUp {
     private const val MIN_ELAPSED_TICKS = 100L

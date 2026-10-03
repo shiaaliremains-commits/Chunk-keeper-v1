@@ -1,11 +1,11 @@
-package the.block.is.awake.modid
+package the.block.is_.awake.modid
 
 import net.fabricmc.api.ModInitializer
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * المسار: src/main/kotlin/the/block/is/awake/modid/Theblockkeepsticking.kt  (استبدل الموجود)
+ * المسار: src/main/kotlin/the/block/is_/awake/modid/Theblockkeepsticking.kt
  */
 object Theblockkeepsticking : ModInitializer {
     const val MOD_ID = "theblockkeepsticking"
