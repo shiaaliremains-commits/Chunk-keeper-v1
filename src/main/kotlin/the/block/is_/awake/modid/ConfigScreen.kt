@@ -1,90 +1,53 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+package the.block.is_.awake.modid
 
-plugins {
-	id("net.fabricmc.fabric-loom")
-	`maven-publish`
-	id("org.jetbrains.kotlin.jvm") version "2.3.0"
-}
+import net.minecraft.client.Minecraft
+import net.minecraft.client.gui.components.Button
+import net.minecraft.client.gui.screens.Screen
+import net.minecraft.network.chat.Component
 
-repositories {
-	maven {
-		name = "TerraformersMC"
-		url = uri("https://maven.terraformersmc.com/releases/")
-	}
-}
+class ConfigScreen(private val parent: Screen?) : Screen(Component.literal("The Blocks Keep Ticking")) {
+    private lateinit var minBtn: Button
+    private lateinit var maxBtn: Button
 
-loom {
-	splitEnvironmentSourceSets()
+    private fun label(name: String, v: Int): Component =
+        Component.literal("$name: $v chunks (${v * 16} blocks)")
 
-	mods {
-		register("theblockkeepsticking") {
-			sourceSet(sourceSets.main.get())
-			sourceSet(sourceSets.getByName("client"))
-		}
-	}
-}
+    private fun next(v: Int) = if (v >= 16) 1 else v + 1
 
-fabricApi {
-	configureDataGeneration {
-		client = true
-		modId = "theblockkeepsticking"
-	}
-}
+    private fun refresh() {
+        minBtn.setMessage(label("Min zone side", ModConfig.minChunksPerSide))
+        maxBtn.setMessage(label("Max zone side", ModConfig.maxChunksPerSide))
+    }
 
-dependencies {
-	minecraft("com.mojang:minecraft:${providers.gradleProperty("minecraft_version").get()}")
-	implementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
+    override fun init() {
+        val cx = width / 2
+        val y = height / 2 - 50
 
-	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
-	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
+        val title = Button.builder(Component.literal("Zone Wand settings")) { }
+            .bounds(cx - 130, y, 260, 20).build()
+        title.active = false
+        addRenderableWidget(title)
 
-	// ModMenu (غيّر النسخة لنسخة تناسب ماينكرافتك من Modrinth)
-	compileOnly("com.terraformersmc:modmenu:3.2.5")
-	runtimeOnly("com.terraformersmc:modmenu:3.2.5")
-}
+        minBtn = Button.builder(label("Min zone side", ModConfig.minChunksPerSide)) {
+            ModConfig.setMin(next(ModConfig.minChunksPerSide))
+            refresh()
+        }.bounds(cx - 130, y + 30, 260, 20).build()
+        addRenderableWidget(minBtn)
 
-tasks.processResources {
-	val version = version
-	inputs.property("version", version)
+        maxBtn = Button.builder(label("Max zone side", ModConfig.maxChunksPerSide)) {
+            ModConfig.setMax(next(ModConfig.maxChunksPerSide))
+            refresh()
+        }.bounds(cx - 130, y + 55, 260, 20).build()
+        addRenderableWidget(maxBtn)
 
-	filesMatching("fabric.mod.json") {
-		expand("version" to version)
-	}
-}
+        addRenderableWidget(
+            Button.builder(Component.literal("Done")) { onClose() }
+                .bounds(cx - 130, y + 90, 260, 20).build()
+        )
+    }
 
-tasks.withType<JavaCompile>().configureEach {
-	options.release = 25
-}
-
-kotlin {
-	compilerOptions {
-		jvmTarget = JvmTarget.JVM_25
-	}
-}
-
-java {
-	withSourcesJar()
-
-	sourceCompatibility = JavaVersion.VERSION_25
-	targetCompatibility = JavaVersion.VERSION_25
-}
-
-tasks.jar {
-	val projectName = project.name
-	inputs.property("projectName", projectName)
-
-	from("LICENSE") {
-		rename { "${it}_$projectName" }
-	}
-}
-
-publishing {
-	publications {
-		register<MavenPublication>("mavenJava") {
-			from(components["java"])
-		}
-	}
-
-	repositories {
-	}
+    override fun onClose() {
+        ModConfig.save()
+        Minecraft.getInstance().setScreen(parent)
+    }
 }
