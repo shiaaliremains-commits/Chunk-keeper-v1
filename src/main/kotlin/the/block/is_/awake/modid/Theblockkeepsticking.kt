@@ -5,7 +5,7 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 
 /**
- * المسار: src/main/kotlin/the/block/is_/awake/modid/Theblockkeepsticking.kt
+ * المسار: src/main/kotlin/the/block/is_/awake/modid/Theblockkeepsticking.kt  (استبدل الموجود)
  */
 object Theblockkeepsticking : ModInitializer {
     const val MOD_ID = "theblockkeepsticking"
@@ -14,6 +14,7 @@ object Theblockkeepsticking : ModInitializer {
     override fun onInitialize() {
         ModAttachments.init()
         ChunkCatchUp.init()
+        ZoneManager.init()
         LOGGER.info("The Blocks Keep Ticking loaded.")
     }
 }

@@ -12,21 +12,29 @@ import net.minecraft.world.level.gamerules.GameRules
 import net.minecraft.world.level.block.AbstractFurnaceBlock
 import net.minecraft.world.level.block.FireBlock
 import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity
+import net.minecraft.world.level.block.entity.BlockEntity
+import net.minecraft.world.level.block.entity.BlockEntityTicker
+import net.minecraft.world.level.block.entity.BlockEntityType
+import net.minecraft.world.level.block.entity.BrewingStandBlockEntity
+import net.minecraft.world.level.block.entity.CampfireBlockEntity
 import net.minecraft.world.level.block.state.BlockState
 import net.minecraft.world.level.chunk.LevelChunk
 
 /**
- * المسار: src/main/kotlin/the/block/is_/awake/modid/ChunkCatchUp.kt
+ * Tracks the "ticking" state of every loaded chunk.
+ *  - chunk stops ticking -> stamp current time
+ *  - chunk ticks again   -> catch up random ticks + furnaces/brewing/campfire
+ * No stamp = chunk is currently ticking.
  */
 object ChunkCatchUp {
     private const val MIN_ELAPSED_TICKS = 100L
     private const val MAX_TICKS_PER_BLOCK = 256
     private const val MAX_FURNACE_TICKS = 72_000L
+    private const val MAX_STATION_TICKS = 1_200L
     private const val BUDGET_NANOS = 2_000_000L
-    /** كل كم tick نفحص حالة الـ Chunks (10 = نصف ثانية). */
     private const val POLL_INTERVAL = 10
 
-    private const val DEBUG = true
+    private const val DEBUG = false
     private var debugCount = 0
     private var pollTimer = 0
 
@@ -45,7 +53,7 @@ object ChunkCatchUp {
     }
 
     fun init() {
-        // عند فتح العالم: نضيف وقت الغياب الحقيقي إلى ساعة المود
+        // world opened: add the real offline time to the mod clock
         ServerLifecycleEvents.SERVER_STARTED.register { server ->
             val nowMs = System.currentTimeMillis()
             for (level in server.allLevels) {
@@ -59,7 +67,7 @@ object ChunkCatchUp {
         }
         ServerLifecycleEvents.SERVER_STOPPED.register { reset() }
 
-        // عند الإغلاق: الـ Chunks الشغّالة نختمها بالوقت الحالي، والمتوقفة نتركها بختمها القديم
+        // world closing: stamp ticking chunks, keep old stamp for stopped ones
         ServerLifecycleEvents.SERVER_STOPPING.register { server ->
             for ((level, map) in LOADED) {
                 val now = virtualTime(level)
@@ -86,7 +94,7 @@ object ChunkCatchUp {
         }
     }
 
-    /** ساعة المود = وقت اللعبة + وقت الغياب وأنت خارج العالم. */
+    /** mod clock = game time + time spent outside the world */
     private fun virtualTime(level: ServerLevel): Long =
         level.gameTime + (level.getAttached(ModAttachments.OFFLINE_TICKS) ?: 0L)
 
@@ -141,6 +149,21 @@ object ChunkCatchUp {
         }
     }
 
+    /** supported block entities: add more types here */
+    private fun isSupported(be: BlockEntity): Boolean =
+        be is AbstractFurnaceBlockEntity || be is BrewingStandBlockEntity || be is CampfireBlockEntity
+
+    /** runs one real tick of the block entity using the block's own ticker */
+    @Suppress("UNCHECKED_CAST")
+    private fun tickOnce(level: ServerLevel, be: BlockEntity): Boolean {
+        if (be.isRemoved || level.getBlockEntity(be.blockPos) !== be) return false
+        val state = level.getBlockState(be.blockPos)
+        val ticker = state.getTicker(level, be.type as BlockEntityType<BlockEntity>)
+            as BlockEntityTicker<BlockEntity>? ?: return false
+        ticker.tick(level, be.blockPos, state, be)
+        return true
+    }
+
     private fun skip(state: BlockState): Boolean =
         !state.isRandomlyTicking || state.block is FireBlock
 
@@ -157,9 +180,9 @@ object ChunkCatchUp {
         private var blockIndex = 0
         private var randomDone = expectedPerBlock <= 0.0
 
-        private var furnaces: List<AbstractFurnaceBlockEntity>? = null
-        private var furnaceIdx = 0
-        private var furnaceTicks = 0L
+        private var machines: List<BlockEntity>? = null
+        private var machineIdx = 0
+        private var machineTicks = 0L
         private var unlitStreak = 0
 
         fun run(deadline: Long): Boolean {
@@ -167,7 +190,7 @@ object ChunkCatchUp {
                 if (!runRandom(deadline)) return false
                 randomDone = true
             }
-            return runFurnaces(deadline)
+            return runMachines(deadline)
         }
 
         private fun runRandom(deadline: Long): Boolean {
@@ -206,30 +229,30 @@ object ChunkCatchUp {
             return true
         }
 
-        private fun runFurnaces(deadline: Long): Boolean {
-            val list = furnaces ?: chunk.blockEntities.values
-                .filterIsInstance<AbstractFurnaceBlockEntity>()
-                .also { furnaces = it }
-            val limit = minOf(elapsed, MAX_FURNACE_TICKS)
+        private fun runMachines(deadline: Long): Boolean {
+            val list = machines ?: chunk.blockEntities.values
+                .filter { isSupported(it) }
+                .also { machines = it }
 
-            while (furnaceIdx < list.size) {
-                val be = list[furnaceIdx]
-                while (furnaceTicks < limit) {
-                    val state = level.getBlockState(be.blockPos)
-                    if (be.isRemoved || state.block !is AbstractFurnaceBlock) break
+            while (machineIdx < list.size) {
+                val be = list[machineIdx]
+                val isFurnace = be is AbstractFurnaceBlockEntity
+                val limit = minOf(elapsed, if (isFurnace) MAX_FURNACE_TICKS else MAX_STATION_TICKS)
 
-                    AbstractFurnaceBlockEntity.serverTick(level, be.blockPos, state, be)
-                    furnaceTicks++
+                while (machineTicks < limit) {
+                    if (!tickOnce(level, be)) break
+                    machineTicks++
 
-                    val after = level.getBlockState(be.blockPos)
-                    val lit = after.hasProperty(AbstractFurnaceBlock.LIT) &&
-                        after.getValue(AbstractFurnaceBlock.LIT)
-                    if (lit) unlitStreak = 0 else if (++unlitStreak >= 2) break
-
-                    if ((furnaceTicks and 63L) == 0L && System.nanoTime() >= deadline) return false
+                    if (isFurnace) {
+                        val after = level.getBlockState(be.blockPos)
+                        val lit = after.hasProperty(AbstractFurnaceBlock.LIT) &&
+                            after.getValue(AbstractFurnaceBlock.LIT)
+                        if (lit) unlitStreak = 0 else if (++unlitStreak >= 2) break
+                    }
+                    if ((machineTicks and 63L) == 0L && System.nanoTime() >= deadline) return false
                 }
-                furnaceIdx++
-                furnaceTicks = 0
+                machineIdx++
+                machineTicks = 0
                 unlitStreak = 0
             }
             return true
