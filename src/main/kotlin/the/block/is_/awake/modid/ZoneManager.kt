@@ -20,10 +20,13 @@ import net.minecraft.world.item.Items
  *  - key + Stick in hand = wand ON/OFF
  *  - left-click block = corner 1, then corner 2 -> zone saved and kept loaded (forceload)
  *  - right-click block inside a zone = delete it
- *  - particles show: saved zones (white), corner 1 (flame), live preview (green / red if invalid)
+ * The server tells the client which frames to draw (cyan = saved, yellow = corner,
+ * green = preview, red = invalid size).
  */
 object ZoneManager {
-    private const val PARTICLE_INTERVAL = 10
+    /** old particle display, kept as a fallback. Set to true if the frames do not show. */
+    private const val USE_PARTICLES = false
+    private const val SYNC_INTERVAL = 5
     private const val EDGE_STEP = 2.5
     private const val SHOW_DISTANCE_SQ = 40.0 * 40.0
 
@@ -31,6 +34,7 @@ object ZoneManager {
         var active = false
         var corner: BlockPos? = null
         var preview: BlockPos? = null
+        var lastSent = ""
     }
 
     private data class Zone(val minX: Int, val minZ: Int, val maxX: Int, val maxZ: Int) {
@@ -60,11 +64,13 @@ object ZoneManager {
 
     private val sessions = HashMap<UUID, Session>()
     private var tickCounter = 0
+    private var particleToggle = false
 
     fun init() {
         ModConfig.load()
         PayloadTypeRegistry.serverboundPlay().register(WandActionPayload.TYPE, WandActionPayload.CODEC)
         PayloadTypeRegistry.clientboundPlay().register(WandStatePayload.TYPE, WandStatePayload.CODEC)
+        PayloadTypeRegistry.clientboundPlay().register(WandBoxesPayload.TYPE, WandBoxesPayload.CODEC)
 
         ServerPlayNetworking.registerGlobalReceiver(WandActionPayload.TYPE) { payload, context ->
             handle(context.player(), payload)
@@ -72,9 +78,9 @@ object ZoneManager {
         ServerLifecycleEvents.SERVER_STOPPED.register { sessions.clear() }
 
         ServerTickEvents.END_SERVER_TICK.register { server ->
-            if (sessions.isNotEmpty() && ++tickCounter >= PARTICLE_INTERVAL) {
+            if (sessions.isNotEmpty() && ++tickCounter >= SYNC_INTERVAL) {
                 tickCounter = 0
-                drawAll(server)
+                syncAll(server)
             }
         }
     }
@@ -125,9 +131,13 @@ object ZoneManager {
                 s.active = !s.active
                 s.corner = null
                 s.preview = null
+                s.lastSent = ""
                 ServerPlayNetworking.send(player, WandStatePayload(s.active))
                 if (s.active) say(player, Kind.OK, "Wand ON: left-click 2 corners | right-click a zone to delete")
-                else say(player, Kind.INFO, "Wand OFF")
+                else {
+                    ServerPlayNetworking.send(player, WandBoxesPayload(""))
+                    say(player, Kind.INFO, "Wand OFF")
+                }
             }
 
             WandActionPayload.SELECT -> {
@@ -190,74 +200,83 @@ object ZoneManager {
         say(player, Kind.OK, "Zone removed")
     }
 
-    // ---------------------------------------------------------------- particles
+    // ---------------------------------------------------------------- display
 
-    private fun drawAll(server: MinecraftServer) {
+    private fun zoneBox(kind: Int, z: Zone, y0: Int, y1: Int) =
+        WandBox(kind, z.minX * 16, y0, z.minZ * 16, (z.maxX + 1) * 16, y1, (z.maxZ + 1) * 16)
+
+    private fun collectBoxes(level: ServerLevel, player: ServerPlayer, s: Session): List<WandBox> {
+        val py = player.blockPosition().y
+        val y0 = Math.floorDiv(py, 8) * 8 - 8
+        val y1 = y0 + 40
+        val out = ArrayList<WandBox>()
+
+        for (z in load(level)) out.add(zoneBox(0, z, y0, y1))
+
+        val c1 = s.corner
+        val pv = s.preview
+        if (c1 != null) {
+            out.add(WandBox(1, c1.x, c1.y, c1.z, c1.x + 1, c1.y + 1, c1.z + 1))
+            if (pv != null) {
+                val zone = Zone.between(c1, pv)
+                out.add(zoneBox(if (sizeError(zone) == null) 2 else 3, zone, y0, y1))
+            }
+        } else if (pv != null) {
+            out.add(zoneBox(4, Zone.between(pv, pv), y0, y1))
+        }
+        return out
+    }
+
+    private fun syncAll(server: MinecraftServer) {
+        particleToggle = !particleToggle
         for ((uuid, s) in sessions) {
             if (!s.active) continue
             val player = server.playerList.getPlayer(uuid) ?: continue
-            if (!holdingStick(player)) continue
             val level = player.level() as ServerLevel
 
-            for (z in load(level)) outline(level, player, z, ParticleTypes.END_ROD)
+            val boxes = if (holdingStick(player)) collectBoxes(level, player, s) else emptyList()
+            val text = WandState.encode(boxes)
+            if (text != s.lastSent) {
+                s.lastSent = text
+                ServerPlayNetworking.send(player, WandBoxesPayload(text))
+            }
 
-            val c1 = s.corner
-            val pv = s.preview
-            if (c1 != null) {
-                box(level, c1, ParticleTypes.FLAME)
-                if (pv != null) {
-                    val zone = Zone.between(c1, pv)
-                    outline(level, player, zone, if (sizeError(zone) == null) ParticleTypes.HAPPY_VILLAGER else ParticleTypes.ANGRY_VILLAGER)
-                }
-            } else if (pv != null) {
-                outline(level, player, Zone.between(pv, pv), ParticleTypes.HAPPY_VILLAGER)
+            if (USE_PARTICLES && particleToggle) {
+                for (b in boxes) outlineParticles(level, player, b)
             }
         }
     }
 
-    private fun dot(level: ServerLevel, type: ParticleOptions, x: Double, y: Double, z: Double) {
-        level.sendParticles(type, x, y, z, 1, 0.0, 0.0, 0.0, 0.0)
+    // ---------------------------------------------------------------- particle fallback
+
+    private fun particleFor(kind: Int): ParticleOptions = when (kind) {
+        0 -> ParticleTypes.END_ROD
+        1 -> ParticleTypes.FLAME
+        3 -> ParticleTypes.ANGRY_VILLAGER
+        else -> ParticleTypes.HAPPY_VILLAGER
     }
 
-    /** rectangle border of a zone around the player's height */
-    private fun outline(level: ServerLevel, player: ServerPlayer, zone: Zone, type: ParticleOptions) {
-        val x0 = (zone.minX * 16).toDouble()
-        val x1 = ((zone.maxX + 1) * 16).toDouble()
-        val z0 = (zone.minZ * 16).toDouble()
-        val z1 = ((zone.maxZ + 1) * 16).toDouble()
+    private fun outlineParticles(level: ServerLevel, player: ServerPlayer, b: WandBox) {
+        val type = particleFor(b.kind)
         val py = player.y
         val heights = doubleArrayOf(py + 0.4, py + 1.8)
 
         fun pt(x: Double, z: Double) {
             if (player.distanceToSqr(x, py, z) > SHOW_DISTANCE_SQ) return
-            for (h in heights) dot(level, type, x, h, z)
+            for (h in heights) level.sendParticles(type, x, h, z, 1, 0.0, 0.0, 0.0, 0.0)
         }
 
-        var x = x0
-        while (x <= x1) {
-            pt(x, z0)
-            pt(x, z1)
+        var x = b.x0.toDouble()
+        while (x <= b.x1) {
+            pt(x, b.z0.toDouble())
+            pt(x, b.z1.toDouble())
             x += EDGE_STEP
         }
-        var z = z0
-        while (z <= z1) {
-            pt(x0, z)
-            pt(x1, z)
+        var z = b.z0.toDouble()
+        while (z <= b.z1) {
+            pt(b.x0.toDouble(), z)
+            pt(b.x1.toDouble(), z)
             z += EDGE_STEP
-        }
-    }
-
-    /** edges of the selected corner block */
-    private fun box(level: ServerLevel, pos: BlockPos, type: ParticleOptions) {
-        val bx = pos.x.toDouble()
-        val by = pos.y.toDouble()
-        val bz = pos.z.toDouble()
-        val t = doubleArrayOf(0.0, 0.5, 1.0)
-        val e = doubleArrayOf(0.0, 1.0)
-        for (a in t) for (b in e) for (c in e) {
-            dot(level, type, bx + a, by + b, bz + c)
-            dot(level, type, bx + b, by + a, bz + c)
-            dot(level, type, bx + b, by + c, bz + a)
         }
     }
 }
