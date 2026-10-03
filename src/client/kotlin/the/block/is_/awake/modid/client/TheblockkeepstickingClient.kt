@@ -8,7 +8,6 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback
 import net.fabricmc.fabric.api.event.player.UseBlockCallback
-import net.minecraft.Util
 import net.minecraft.client.KeyMapping
 import net.minecraft.core.BlockPos
 import net.minecraft.gizmos.GizmoStyle
@@ -32,8 +31,9 @@ object TheblockkeepstickingClient : ClientModInitializer {
     private var previewTimer = 0
 
     // frame colors (ARGB)
-    private val CYAN = 0xFF00E5FF.toInt()    // هذا لون البلوكات المختارة بعد الحفظ، تكدر تغيره براحتك
+    private val CYAN = 0xFF00E5FF.toInt()    // saved zone
     private val YELLOW = 0xFFFFD500.toInt()  // corner block
+    private val GREEN = 0xFF39FF14.toInt()   // preview
     private val RED = 0xFFFF3030.toInt()     // invalid size
 
     override fun onInitializeClient() {
@@ -107,22 +107,18 @@ object TheblockkeepstickingClient : ClientModInitializer {
     /** draws solid colored frames using Minecraft's own debug-line system (same as F3+B hitboxes) */
     private fun drawFrames() {
         val e = 0.004
-        val time = Util.getMillis()
-        
-        // حساب النبض (Pulse) للون الأبيض الشفاف
-        val pulseAlpha = (100 + 80 * sin(time / 150.0)).toInt() 
-        val PULSING_WHITE = (pulseAlpha shl 24) or 0xFFFFFF // أبيض شفاف ينبض
-        
+        val time = System.currentTimeMillis()
+        val pulseAlpha = (100 + 80 * sin(time / 150.0)).toInt()
+        val PULSING_WHITE = (pulseAlpha shl 24) or 0xFFFFFF
+
         for (b in WandState.boxes) {
             val color = when (b.kind) {
                 0 -> CYAN
                 1 -> YELLOW
                 3 -> RED
-                2, 4 -> PULSING_WHITE // عند المعاينة والاختيار فقط يحط اللون الأبيض الشفاف اللي ينبض
                 else -> PULSING_WHITE
             }
             val box = AABB(b.x0 - e, b.y0 - e, b.z0 - e, b.x1 + e, b.y1 + e, b.z1 + e)
-            
             Gizmos.cuboid(box, GizmoStyle.stroke(color)).persistForMillis(100)
         }
     }
