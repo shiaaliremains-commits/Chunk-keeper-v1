@@ -108,7 +108,6 @@ object TheblockkeepstickingClient : ClientModInitializer {
         }
     }
 
-    /** Draws transparent frame-only chunk zones, smooth pulse ONLY on hover box */
     private fun drawFrames() {
         val e = 0.004
         val time = System.currentTimeMillis()
@@ -122,28 +121,28 @@ object TheblockkeepstickingClient : ClientModInitializer {
 
             when (b.kind) {
                 0 -> {
-                    // Saved Chunk Zone: Frame أزرق شفاف فقط بدون أي نبض
-                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFF00E5FF.toInt())).persistForMillis(50)
+                    // Frame أزرق شفاف للـ Chunks المحفوظة
+                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFF00E5FF.toInt())).persistForMillis(100)
                 }
                 1 -> {
-                    // Corner 1: عمود أصفر ثابت ومضيء للتمييز من بعيد
-                    Gizmos.cuboid(box, GizmoStyle.fill(0x40FFFF00.toInt())).persistForMillis(50)
-                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFFFFFF00.toInt())).persistForMillis(50)
+                    // Corner 1: عمود أصفر بارز ثابت
+                    Gizmos.cuboid(box, GizmoStyle.fill(0x40FFFF00.toInt())).persistForMillis(100)
+                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFFFFFF00.toInt())).persistForMillis(100)
                 }
                 2 -> {
-                    // Valid Stretch Preview: إطار أخضر + زجاج خفيف جداً بدون نبض
-                    Gizmos.cuboid(box, GizmoStyle.fill(0x1555FF55.toInt())).persistForMillis(50)
-                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFF55FF55.toInt())).persistForMillis(50)
+                    // Dynamic Stretch Preview: مربع أخضر واضح يمتد مباشرة ويا نظرك
+                    Gizmos.cuboid(box, GizmoStyle.fill(0x3000FF00.toInt())).persistForMillis(100)
+                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFF00FF00.toInt())).persistForMillis(100)
                 }
                 3 -> {
-                    // Invalid Stretch Preview: إطار أحمر بدون نبض
-                    Gizmos.cuboid(box, GizmoStyle.fill(0x15FF3030.toInt())).persistForMillis(50)
-                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFFFF3030.toInt())).persistForMillis(50)
+                    // Invalid Stretch: أحمر عند تجاوز الحد المسموح
+                    Gizmos.cuboid(box, GizmoStyle.fill(0x30FF0000.toInt())).persistForMillis(100)
+                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFFFF0000.toInt())).persistForMillis(100)
                 }
                 else -> {
-                    // Hover Box (kind 4): النبض باقي حصرياً هنا
-                    Gizmos.cuboid(box, GizmoStyle.fill(HOVER_FILL)).persistForMillis(50)
-                    Gizmos.cuboid(box, GizmoStyle.stroke(HOVER_LINE)).persistForMillis(50)
+                    // Hover Box: النبض حصرياً هنا
+                    Gizmos.cuboid(box, GizmoStyle.fill(HOVER_FILL)).persistForMillis(100)
+                    Gizmos.cuboid(box, GizmoStyle.stroke(HOVER_LINE)).persistForMillis(100)
                 }
             }
         }

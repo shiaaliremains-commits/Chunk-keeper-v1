@@ -16,9 +16,6 @@ import net.minecraft.sounds.SoundEvents
 import net.minecraft.sounds.SoundSource
 import net.minecraft.world.item.Items
 
-/**
- * Server logic for zone wand with distant visual beacons and live stretch previewing.
- */
 object ZoneManager {
     private const val SYNC_INTERVAL = 1
 
@@ -219,7 +216,6 @@ object ZoneManager {
         val y1 = y0 + 48
         val out = ArrayList<WandBox>()
 
-        // 1. Saved Zones: إطار أزرق عالي الارتفاع ينشاف بوضوح من بعيد
         for (z in load(level)) {
             out.add(zoneBox(0, z, y0, y1))
         }
@@ -228,18 +224,15 @@ object ZoneManager {
         val pv = s.preview
 
         if (c1 != null) {
-            // مؤشر Corner 1: ينرسم كـ عمود أصفر بارز ارتفاعه 10 بلوكات
             out.add(WandBox(1, c1.x, c1.y - 1, c1.z, c1.x + 1, c1.y + 10, c1.z + 1))
 
             if (pv != null) {
-                // إظهار معاينة التمديد الأخضر بوضوح بين الزاوية الأولى والبلوكة التي ينظر إليها
                 val zone = Zone.between(c1, pv)
                 out.add(zoneBox(if (sizeError(zone) == null) 2 else 3, zone, y0, y1))
             }
         }
 
         if (pv != null) {
-            // البلوكة التي تحت الـ Crosshair (نوع 4 - النبض الوحيد)
             out.add(WandBox(4, pv.x, pv.y, pv.z, pv.x + 1, pv.y + 1, pv.z + 1))
         }
         return out
