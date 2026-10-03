@@ -17,19 +17,19 @@
 	"entrypoints": {
 		"main": [
 			{
-				"value": "the.block.is.awake.modid.Theblockkeepsticking",
+				"value": "the.block.is_.awake.modid.Theblockkeepsticking",
 				"adapter": "kotlin"
 			}
 		],
 		"client": [
 			{
-				"value": "the.block.is.awake.modid.client.TheblockkeepstickingClient",
+				"value": "the.block.is_.awake.modid.client.TheblockkeepstickingClient",
 				"adapter": "kotlin"
 			}
 		],
 		"fabric-datagen": [
 			{
-				"value": "the.block.is.awake.modid.client.TheblockkeepstickingDataGenerator",
+				"value": "the.block.is_.awake.modid.client.TheblockkeepstickingDataGenerator",
 				"adapter": "kotlin"
 			}
 		]
