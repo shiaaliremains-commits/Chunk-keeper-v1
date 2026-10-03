@@ -1,4 +1,4 @@
-package the.block.is.awake.modid.client
+package the.block.is_.awake.modid.client
 
 import net.fabricmc.api.ClientModInitializer
 
