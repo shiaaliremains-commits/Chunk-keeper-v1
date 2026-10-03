@@ -8,12 +8,11 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking
 import net.fabricmc.fabric.api.event.player.AttackBlockCallback
 import net.fabricmc.fabric.api.event.player.UseBlockCallback
+import net.minecraft.Util
 import net.minecraft.client.KeyMapping
-import net.minecraft.client.Minecraft
 import net.minecraft.core.BlockPos
 import net.minecraft.gizmos.GizmoStyle
 import net.minecraft.gizmos.Gizmos
-import net.minecraft.network.chat.Component
 import net.minecraft.resources.Identifier
 import net.minecraft.world.InteractionHand
 import net.minecraft.world.InteractionResult
@@ -32,12 +31,10 @@ object TheblockkeepstickingClient : ClientModInitializer {
     private lateinit var toggleKey: KeyMapping
     private var previewTimer = 0
 
-    // ألوان الإطار الخارجي (ARGB)
-    private val CYAN = 0xFF00E5FF.toInt()         // منطقة محفوظة
-    private val CORNER_COLOR = 0xFFFF9100.toInt()   // زاوية التحديد الأولى (برتقالي ذهبي ساطع)
-    private val GREEN = 0xFF39FF14.toInt()        // معاينة مقبولة
-    private val RED = 0xFFFF3333.toInt()          // معاينة بحجم مرفوض
-    private val BLUE = 0xFF2979FF.toInt()         // المعاينة الأولية للبلوكة قبل البدء
+    // frame colors (ARGB)
+    private val CYAN = 0xFF00E5FF.toInt()    // هذا لون البلوكات المختارة بعد الحفظ، تكدر تغيره براحتك
+    private val YELLOW = 0xFFFFD500.toInt()  // corner block
+    private val RED = 0xFFFF3030.toInt()     // invalid size
 
     override fun onInitializeClient() {
         val category = KeyMapping.Category.register(
@@ -59,8 +56,8 @@ object TheblockkeepstickingClient : ClientModInitializer {
             }
 
             if (WandState.clientActive) {
-                // إرسال موقع البلوكة التي ينظر إليها اللاعب للمعاينة المباشرة
-                if (++previewTimer >= 2) {
+                // tell the server which block we look at (for the live preview)
+                if (++previewTimer >= 4) {
                     previewTimer = 0
                     val player = client.player
                     val hit = client.hitResult
@@ -70,9 +67,7 @@ object TheblockkeepstickingClient : ClientModInitializer {
                         ClientPlayNetworking.send(WandActionPayload(WandActionPayload.PREVIEW, hit.blockPos))
                     }
                 }
-
-                // رسم الصناديق وعرض عداد البلوكات
-                renderBoxesAndHud(client)
+                drawFrames()
             }
         }
 
@@ -80,11 +75,9 @@ object TheblockkeepstickingClient : ClientModInitializer {
             WandState.clientActive = payload.active
             if (!payload.active) WandState.boxes = emptyList()
         }
-
         ClientPlayNetworking.registerGlobalReceiver(WandBoxesPayload.TYPE) { payload, _ ->
             WandState.boxes = WandState.decode(payload.data)
         }
-
         ClientPlayConnectionEvents.DISCONNECT.register { _, _ ->
             WandState.clientActive = false
             WandState.boxes = emptyList()
@@ -111,49 +104,26 @@ object TheblockkeepstickingClient : ClientModInitializer {
         }
     }
 
-    private fun renderBoxesAndHud(client: Minecraft) {
-        val e = 0.005
-        val time = System.currentTimeMillis() / 250.0
-
-        // نبض الشفافية الأبيض (تتراوح بين 15 و 95)
-        val pulseAlpha = (45 + (35 * sin(time))).toInt().coerceIn(15, 95)
-        val pulsingWhite = (pulseAlpha shl 24) or 0x00FFFFFF
-
-        var activeSelectionBox: the.block.is_.awake.modid.WandBox? = null
-
+    /** draws solid colored frames using Minecraft's own debug-line system (same as F3+B hitboxes) */
+    private fun drawFrames() {
+        val e = 0.004
+        val time = Util.getMillis()
+        
+        // حساب النبض (Pulse) للون الأبيض الشفاف
+        val pulseAlpha = (100 + 80 * sin(time / 150.0)).toInt() 
+        val PULSING_WHITE = (pulseAlpha shl 24) or 0xFFFFFF // أبيض شفاف ينبض
+        
         for (b in WandState.boxes) {
-            val strokeColor = when (b.kind) {
+            val color = when (b.kind) {
                 0 -> CYAN
-                1 -> CORNER_COLOR
-                2 -> GREEN
+                1 -> YELLOW
                 3 -> RED
-                else -> BLUE
+                2, 4 -> PULSING_WHITE // عند المعاينة والاختيار فقط يحط اللون الأبيض الشفاف اللي ينبض
+                else -> PULSING_WHITE
             }
-
             val box = AABB(b.x0 - e, b.y0 - e, b.z0 - e, b.x1 + e, b.y1 + e, b.z1 + e)
-
-            // 1. رسم الإطار الخارجي الملون
-            Gizmos.cuboid(box, GizmoStyle.stroke(strokeColor)).persistForMillis(100)
-
-            // 2. تعبئة داخلية بلون أبيض شفاف ينبض
-            if (b.kind == 2 || b.kind == 4) {
-                Gizmos.cuboid(box, GizmoStyle.fill(pulsingWhite)).persistForMillis(100)
-                activeSelectionBox = b
-            } else if (b.kind == 1) {
-                // بلوكة الزاوية بلون مميز شفاف
-                val cornerFill = (60 shl 24) or (CORNER_COLOR and 0x00FFFFFF)
-                Gizmos.cuboid(box, GizmoStyle.fill(cornerFill)).persistForMillis(100)
-            }
-        }
-
-        // عرض عدد البلوكات والأبعاد مباشرة في شريط الـ Actionbar
-        if (activeSelectionBox != null && client.player != null) {
-            val b = activeSelectionBox
-            val text = Component.literal("§fالتحديد: §e${b.blockCountX}x${b.blockCountZ} §7بلوكة ")
-                .append(Component.literal("§8| §fالمجموع: §a${b.blockCountX * b.blockCountZ} §7بلوكة "))
-                .append(Component.literal("§8(§b${b.blockCountX / 16}x${b.blockCountZ / 16} Chunks§8)"))
-
-            client.gui.setOverlayMessage(text, false)
+            
+            Gizmos.cuboid(box, GizmoStyle.stroke(color)).persistForMillis(100)
         }
     }
 }

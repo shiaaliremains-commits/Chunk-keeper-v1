@@ -7,16 +7,28 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking
 import net.minecraft.ChatFormatting
 import net.minecraft.core.BlockPos
+import net.minecraft.core.particles.ParticleOptions
+import net.minecraft.core.particles.ParticleTypes
 import net.minecraft.network.chat.Component
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerLevel
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.item.Items
-import kotlin.math.max
-import kotlin.math.min
 
+/**
+ * Server logic of the zone wand.
+ *  - key + Stick in hand = wand ON/OFF
+ *  - left-click block = corner 1, then corner 2 -> zone saved and kept loaded (forceload)
+ *  - right-click block inside a zone = delete it
+ * The server tells the client which frames to draw (cyan = saved, yellow = corner,
+ * green = preview, red = invalid size).
+ */
 object ZoneManager {
-    private const val SYNC_INTERVAL = 3
+    /** old particle display, kept as a fallback. Set to true if the frames do not show. */
+    private const val USE_PARTICLES = false
+    private const val SYNC_INTERVAL = 5
+    private const val EDGE_STEP = 2.5
+    private const val SHOW_DISTANCE_SQ = 40.0 * 40.0
 
     private class Session {
         var active = false
@@ -38,8 +50,8 @@ object ZoneManager {
             }
 
             fun between(a: BlockPos, b: BlockPos) = Zone(
-                min(a.x shr 4, b.x shr 4), min(a.z shr 4, b.z shr 4),
-                max(a.x shr 4, b.x shr 4), max(a.z shr 4, b.z shr 4)
+                minOf(a.x shr 4, b.x shr 4), minOf(a.z shr 4, b.z shr 4),
+                maxOf(a.x shr 4, b.x shr 4), maxOf(a.z shr 4, b.z shr 4)
             )
         }
     }
@@ -52,6 +64,7 @@ object ZoneManager {
 
     private val sessions = HashMap<UUID, Session>()
     private var tickCounter = 0
+    private var particleToggle = false
 
     fun init() {
         ModConfig.load()
@@ -72,11 +85,15 @@ object ZoneManager {
         }
     }
 
+    // ---------------------------------------------------------------- messages
+
     private fun say(player: ServerPlayer, kind: Kind, text: String) {
         val msg = Component.literal(kind.symbol + " ").withStyle(kind.color, ChatFormatting.BOLD)
             .append(Component.literal(text).withStyle(ChatFormatting.WHITE))
         player.sendSystemMessage(msg, true)
     }
+
+    // ---------------------------------------------------------------- helpers
 
     private fun holdingStick(player: ServerPlayer) = player.mainHandItem.item == Items.STICK
 
@@ -91,13 +108,15 @@ object ZoneManager {
         val min = ModConfig.minChunksPerSide
         val max = ModConfig.maxChunksPerSide
         if (zone.width() > max || zone.depth() > max) {
-            return "كبير جداً: ${zone.width()}x${zone.depth()} تشانك (الحد الأقصى ${max}x$max تشانك)"
+            return "Too big: ${zone.width()}x${zone.depth()} chunks (max ${max}x$max = ${max * 16}x${max * 16} blocks)"
         }
         if (zone.width() < min || zone.depth() < min) {
-            return "صغير جداً: ${zone.width()}x${zone.depth()} تشانك (الحد الأدنى ${min}x$min تشانك)"
+            return "Too small: ${zone.width()}x${zone.depth()} chunks (min ${min}x$min)"
         }
         return null
     }
+
+    // ---------------------------------------------------------------- actions
 
     private fun handle(player: ServerPlayer, payload: WandActionPayload) {
         val level = player.level() as ServerLevel
@@ -106,7 +125,7 @@ object ZoneManager {
         when (payload.action) {
             WandActionPayload.TOGGLE -> {
                 if (!holdingStick(player)) {
-                    say(player, Kind.ERR, "امسك Stick في يدك لاستعمال عصا التحديد")
+                    say(player, Kind.ERR, "Hold a Stick to use the zone wand")
                     return
                 }
                 s.active = !s.active
@@ -114,10 +133,10 @@ object ZoneManager {
                 s.preview = null
                 s.lastSent = ""
                 ServerPlayNetworking.send(player, WandStatePayload(s.active))
-                if (s.active) say(player, Kind.OK, "تم تفعيل العصا: حدد الزاوية الأولى بالزر الأيسر")
+                if (s.active) say(player, Kind.OK, "Wand ON: left-click 2 corners | right-click a zone to delete")
                 else {
                     ServerPlayNetworking.send(player, WandBoxesPayload(""))
-                    say(player, Kind.INFO, "تم إيقاف العصا")
+                    say(player, Kind.INFO, "Wand OFF")
                 }
             }
 
@@ -129,7 +148,7 @@ object ZoneManager {
                 val first = s.corner
                 if (first == null) {
                     s.corner = payload.pos
-                    say(player, Kind.INFO, "تم تحديد الزاوية 1 (${payload.pos.x}, ${payload.pos.z}). انقر على الزاوية المقابلة")
+                    say(player, Kind.INFO, "Corner 1 set (${payload.pos.x}, ${payload.pos.z}). Left-click the opposite corner")
                     return
                 }
                 s.corner = null
@@ -145,9 +164,7 @@ object ZoneManager {
             }
 
             WandActionPayload.PREVIEW -> {
-                if (s.active && holdingStick(player)) {
-                    s.preview = payload.pos
-                }
+                if (s.active && holdingStick(player)) s.preview = payload.pos
             }
         }
     }
@@ -160,11 +177,8 @@ object ZoneManager {
             return
         }
         save(level, load(level) + zone)
-        for (x in zone.minX..zone.maxX) for (z in zone.minZ..zone.maxZ) {
-            level.setChunkForced(x, z, true)
-        }
-        val totalBlocks = (zone.width() * 16) * (zone.depth() * 16)
-        say(player, Kind.OK, "تم حفظ المنطقة بنجاح! الأبعاد: ${zone.width() * 16}x${zone.depth() * 16} بلوكة ($totalBlocks بلوكة)")
+        for (x in zone.minX..zone.maxX) for (z in zone.minZ..zone.maxZ) level.setChunkForced(x, z, true)
+        say(player, Kind.OK, "Zone saved: ${zone.width()}x${zone.depth()} chunks (${zone.width() * 16}x${zone.depth() * 16} blocks) stays active")
     }
 
     private fun removeZones(player: ServerPlayer, level: ServerLevel, pos: BlockPos) {
@@ -173,7 +187,7 @@ object ZoneManager {
         val all = load(level)
         val hit = all.filter { it.contains(cx, cz) }
         if (hit.isEmpty()) {
-            say(player, Kind.ERR, "لا توجد منطقة محفوظة هنا")
+            say(player, Kind.ERR, "No zone here")
             return
         }
         val remaining = all - hit.toSet()
@@ -183,21 +197,22 @@ object ZoneManager {
                 if (remaining.none { it.contains(x, y) }) level.setChunkForced(x, y, false)
             }
         }
-        say(player, Kind.OK, "تم حذف المنطقة وإلغاء تحميلها")
+        say(player, Kind.OK, "Zone removed")
     }
+
+    // ---------------------------------------------------------------- display
 
     private fun zoneBox(kind: Int, z: Zone, y0: Int, y1: Int) =
         WandBox(kind, z.minX * 16, y0, z.minZ * 16, (z.maxX + 1) * 16, y1, (z.maxZ + 1) * 16)
 
     private fun collectBoxes(level: ServerLevel, player: ServerPlayer, s: Session): List<WandBox> {
         val py = player.blockPosition().y
-        val y0 = Math.floorDiv(py, 8) * 8 - 4
-        val y1 = y0 + 32
+        val y0 = Math.floorDiv(py, 8) * 8 - 8
+        val y1 = y0 + 40
         val out = ArrayList<WandBox>()
 
-        for (z in load(level)) {
-            out.add(zoneBox(0, z, y0, y1))
-        }
+        // المناطق المحفوظة تبقى تستخدم نظام الجانكات
+        for (z in load(level)) out.add(zoneBox(0, z, y0, y1))
 
         val c1 = s.corner
         val pv = s.preview
@@ -205,15 +220,25 @@ object ZoneManager {
             out.add(WandBox(1, c1.x, c1.y, c1.z, c1.x + 1, c1.y + 1, c1.z + 1))
             if (pv != null) {
                 val zone = Zone.between(c1, pv)
-                out.add(zoneBox(if (sizeError(zone) == null) 2 else 3, zone, y0, y1))
+                // التعديل هنا: يحدد البلوكات المشمولة بشكل مربعي من الزاوية للزاوية بالضبط
+                val minX = minOf(c1.x, pv.x)
+                val minY = minOf(c1.y, pv.y)
+                val minZ = minOf(c1.z, pv.z)
+                val maxX = maxOf(c1.x, pv.x) + 1
+                val maxY = maxOf(c1.y, pv.y) + 1
+                val maxZ = maxOf(c1.z, pv.z) + 1
+                
+                out.add(WandBox(if (sizeError(zone) == null) 2 else 3, minX, minY, minZ, maxX, maxY, maxZ))
             }
         } else if (pv != null) {
-            out.add(zoneBox(4, Zone.between(pv, pv), y0, y1))
+            // بلوكة المعاينة قبل اختيار الزاوية الأولى
+            out.add(WandBox(4, pv.x, pv.y, pv.z, pv.x + 1, pv.y + 1, pv.z + 1))
         }
         return out
     }
 
     private fun syncAll(server: MinecraftServer) {
+        particleToggle = !particleToggle
         for ((uuid, s) in sessions) {
             if (!s.active) continue
             val player = server.playerList.getPlayer(uuid) ?: continue
@@ -225,6 +250,43 @@ object ZoneManager {
                 s.lastSent = text
                 ServerPlayNetworking.send(player, WandBoxesPayload(text))
             }
+
+            if (USE_PARTICLES && particleToggle) {
+                for (b in boxes) outlineParticles(level, player, b)
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- particle fallback
+
+    private fun particleFor(kind: Int): ParticleOptions = when (kind) {
+        0 -> ParticleTypes.END_ROD
+        1 -> ParticleTypes.FLAME
+        3 -> ParticleTypes.ANGRY_VILLAGER
+        else -> ParticleTypes.HAPPY_VILLAGER
+    }
+
+    private fun outlineParticles(level: ServerLevel, player: ServerPlayer, b: WandBox) {
+        val type = particleFor(b.kind)
+        val py = player.y
+        val heights = doubleArrayOf(py + 0.4, py + 1.8)
+
+        fun pt(x: Double, z: Double) {
+            if (player.distanceToSqr(x, py, z) > SHOW_DISTANCE_SQ) return
+            for (h in heights) level.sendParticles(type, x, h, z, 1, 0.0, 0.0, 0.0, 0.0)
+        }
+
+        var x = b.x0.toDouble()
+        while (x <= b.x1) {
+            pt(x, b.z0.toDouble())
+            pt(x, b.z1.toDouble())
+            x += EDGE_STEP
+        }
+        var z = b.z0.toDouble()
+        while (z <= b.z1) {
+            pt(b.x0.toDouble(), z)
+            pt(b.x1.toDouble(), z)
+            z += EDGE_STEP
         }
     }
 }

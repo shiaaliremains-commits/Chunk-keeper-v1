@@ -6,26 +6,13 @@ import net.minecraft.network.codec.ByteBufCodecs
 import net.minecraft.network.codec.StreamCodec
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload
 import net.minecraft.resources.Identifier
-import kotlin.math.abs
 
-/**
- * kind:
- * 0 = منطقة محفوظة (Saved Zone)
- * 1 = بلوكة الزاوية المحددة الأولى (Corner 1)
- * 2 = معاينة صحيحة (Preview Valid)
- * 3 = معاينة بحجم خاطئ (Preview Invalid)
- * 4 = التشانك المستهدف حالياً (Looked-at chunk)
- */
+/** one frame to draw: kind 0 = saved zone, 1 = corner block, 2 = preview OK, 3 = preview invalid, 4 = looked-at chunk */
 data class WandBox(
     val kind: Int,
     val x0: Int, val y0: Int, val z0: Int,
     val x1: Int, val y1: Int, val z1: Int
-) {
-    val blockCountX: Int get() = abs(x1 - x0)
-    val blockCountY: Int get() = abs(y1 - y0)
-    val blockCountZ: Int get() = abs(z1 - z0)
-    val totalBlocks: Long get() = blockCountX.toLong() * blockCountY.toLong() * blockCountZ.toLong()
-}
+)
 
 object WandState {
     @Volatile
@@ -46,7 +33,7 @@ object WandState {
     }
 }
 
-/** client -> server: إرسال الأوامر وتحديث موقع المعاينة المباشر */
+/** client -> server: toggle / select corner / remove zone / preview position */
 class WandActionPayload(val action: Int, val pos: BlockPos) : CustomPacketPayload {
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
 
@@ -60,15 +47,15 @@ class WandActionPayload(val action: Int, val pos: BlockPos) : CustomPacketPayloa
             CustomPacketPayload.Type(Identifier.fromNamespaceAndPath(Theblockkeepsticking.MOD_ID, "wand_action"))
 
         val CODEC: StreamCodec<RegistryFriendlyByteBuf, WandActionPayload> =
-            StreamCodec.composite(
-                ByteBufCodecs.INT, { it.action },
-                BlockPos.STREAM_CODEC, { it.pos },
-                { a, b -> WandActionPayload(a, b) }
+            StreamCodec.composite<RegistryFriendlyByteBuf, WandActionPayload, Int, BlockPos>(
+                ByteBufCodecs.INT, { p: WandActionPayload -> p.action },
+                BlockPos.STREAM_CODEC, { p: WandActionPayload -> p.pos },
+                { a: Int, b: BlockPos -> WandActionPayload(a, b) }
             )
     }
 }
 
-/** server -> client: تفعيل أو إيقاف الأداة */
+/** server -> client: wand ON/OFF */
 class WandStatePayload(val active: Boolean) : CustomPacketPayload {
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
 
@@ -77,14 +64,14 @@ class WandStatePayload(val active: Boolean) : CustomPacketPayload {
             CustomPacketPayload.Type(Identifier.fromNamespaceAndPath(Theblockkeepsticking.MOD_ID, "wand_state"))
 
         val CODEC: StreamCodec<RegistryFriendlyByteBuf, WandStatePayload> =
-            StreamCodec.composite(
-                ByteBufCodecs.BOOL, { it.active },
-                { b -> WandStatePayload(b) }
+            StreamCodec.composite<RegistryFriendlyByteBuf, WandStatePayload, Boolean>(
+                ByteBufCodecs.BOOL, { p: WandStatePayload -> p.active },
+                { b: Boolean -> WandStatePayload(b) }
             )
     }
 }
 
-/** server -> client: بيانات الصناديق والمناطق لرسمها */
+/** server -> client: the frames to draw (text encoded, see WandState.encode) */
 class WandBoxesPayload(val data: String) : CustomPacketPayload {
     override fun type(): CustomPacketPayload.Type<out CustomPacketPayload> = TYPE
 
@@ -93,9 +80,9 @@ class WandBoxesPayload(val data: String) : CustomPacketPayload {
             CustomPacketPayload.Type(Identifier.fromNamespaceAndPath(Theblockkeepsticking.MOD_ID, "wand_boxes"))
 
         val CODEC: StreamCodec<RegistryFriendlyByteBuf, WandBoxesPayload> =
-            StreamCodec.composite(
-                ByteBufCodecs.STRING_UTF8, { it.data },
-                { s -> WandBoxesPayload(s) }
+            StreamCodec.composite<RegistryFriendlyByteBuf, WandBoxesPayload, String>(
+                ByteBufCodecs.STRING_UTF8, { p: WandBoxesPayload -> p.data },
+                { s: String -> WandBoxesPayload(s) }
             )
     }
 }
