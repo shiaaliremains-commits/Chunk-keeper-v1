@@ -79,7 +79,6 @@ object TheblockkeepstickingClient : ClientModInitializer {
             WandState.boxes = emptyList()
         }
 
-        // إضافة حماية لمنع تسجيل الضغطة مرتين متتاليات بسرعة
         AttackBlockCallback.EVENT.register { player, level, _, pos, _ ->
             if (level.isClientSide && WandState.clientActive && player.mainHandItem.item == Items.STICK) {
                 val now = System.currentTimeMillis()
@@ -109,27 +108,44 @@ object TheblockkeepstickingClient : ClientModInitializer {
         }
     }
 
-    /** Draws clean static frames, pulsing ONLY the hover target block */
+    /** Draws transparent frame-only chunk zones, smooth pulse ONLY on hover box */
     private fun drawFrames() {
         val e = 0.004
         val time = System.currentTimeMillis()
-        val pulseAlpha = (110 + 90 * sin(time / 130.0)).toInt()
+        val pulseAlpha = (120 + 80 * sin(time / 140.0)).toInt()
 
-        val PULSING_WHITE_LINE = (pulseAlpha shl 24) or 0xFFFFFF
-        val PULSING_WHITE_FILL = ((pulseAlpha / 4) shl 24) or 0xFFFFFF
+        val HOVER_LINE = (pulseAlpha shl 24) or 0xFFFFFF
+        val HOVER_FILL = ((pulseAlpha / 4) shl 24) or 0xFFFFFF
 
         for (b in WandState.boxes) {
-            val (lineColor, fillColor) = when (b.kind) {
-                0 -> Pair(0xFF00E5FF.toInt(), 0x2000E5FF.toInt())  // Saved Zone: Cyan ثابت بدون نبض
-                1 -> Pair(0xFFFFD500.toInt(), 0x40FFD500.toInt())  // Corner 1: Yellow ثابت بدون نبض
-                2 -> Pair(0xFF55FF55.toInt(), 0x2555FF55.toInt())  // Stretch Preview: Green ثابت
-                3 -> Pair(0xFFFF3030.toInt(), 0x30FF3030.toInt())  // Invalid Stretch: Red ثابت
-                else -> Pair(PULSING_WHITE_LINE, PULSING_WHITE_FILL) // Target Hover Box (النبض باقي فقط هنا)
-            }
             val box = AABB(b.x0 - e, b.y0 - e, b.z0 - e, b.x1 + e, b.y1 + e, b.z1 + e)
 
-            Gizmos.cuboid(box, GizmoStyle.fill(fillColor)).persistForMillis(50)
-            Gizmos.cuboid(box, GizmoStyle.stroke(lineColor)).persistForMillis(50)
+            when (b.kind) {
+                0 -> {
+                    // Saved Chunk Zone: Frame أزرق شفاف فقط بدون أي نبض
+                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFF00E5FF.toInt())).persistForMillis(50)
+                }
+                1 -> {
+                    // Corner 1: عمود أصفر ثابت ومضيء للتمييز من بعيد
+                    Gizmos.cuboid(box, GizmoStyle.fill(0x40FFFF00.toInt())).persistForMillis(50)
+                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFFFFFF00.toInt())).persistForMillis(50)
+                }
+                2 -> {
+                    // Valid Stretch Preview: إطار أخضر + زجاج خفيف جداً بدون نبض
+                    Gizmos.cuboid(box, GizmoStyle.fill(0x1555FF55.toInt())).persistForMillis(50)
+                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFF55FF55.toInt())).persistForMillis(50)
+                }
+                3 -> {
+                    // Invalid Stretch Preview: إطار أحمر بدون نبض
+                    Gizmos.cuboid(box, GizmoStyle.fill(0x15FF3030.toInt())).persistForMillis(50)
+                    Gizmos.cuboid(box, GizmoStyle.stroke(0xFFFF3030.toInt())).persistForMillis(50)
+                }
+                else -> {
+                    // Hover Box (kind 4): النبض باقي حصرياً هنا
+                    Gizmos.cuboid(box, GizmoStyle.fill(HOVER_FILL)).persistForMillis(50)
+                    Gizmos.cuboid(box, GizmoStyle.stroke(HOVER_LINE)).persistForMillis(50)
+                }
+            }
         }
     }
 }

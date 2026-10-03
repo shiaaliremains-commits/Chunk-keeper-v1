@@ -7,7 +7,6 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking
 import net.minecraft.ChatFormatting
 import net.minecraft.core.BlockPos
-import net.minecraft.core.particles.ParticleOptions
 import net.minecraft.core.particles.ParticleTypes
 import net.minecraft.network.chat.Component
 import net.minecraft.server.MinecraftServer
@@ -18,13 +17,10 @@ import net.minecraft.sounds.SoundSource
 import net.minecraft.world.item.Items
 
 /**
- * Server logic for zone wand with accurate stretch-previewing and fixed click double-firing.
+ * Server logic for zone wand with distant visual beacons and live stretch previewing.
  */
 object ZoneManager {
-    private const val USE_PARTICLES = false
     private const val SYNC_INTERVAL = 1
-    private const val EDGE_STEP = 2.5
-    private const val SHOW_DISTANCE_SQ = 40.0 * 40.0
 
     private class Session {
         var active = false
@@ -88,6 +84,8 @@ object ZoneManager {
 
     private fun sendHud(player: ServerPlayer, text: String) {
         val msg = Component.literal(text).withStyle(ChatFormatting.AQUA, ChatFormatting.BOLD)
+            .append(Component.literal(" | ").withStyle(ChatFormatting.GRAY))
+            .append(Component.literal("Forceload ACTIVE").withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD))
         player.sendSystemMessage(msg, true)
     }
 
@@ -145,7 +143,7 @@ object ZoneManager {
                 if (first == null) {
                     s.corner = payload.pos
                     level.playSound(null, payload.pos, SoundEvents.NOTE_BLOCK_CHIME.value(), SoundSource.PLAYERS, 0.9f, 1.5f)
-                    say(player, Kind.INFO, "Corner 1 set (${payload.pos.x}, ${payload.pos.z}). Move crosshair & left-click Corner 2")
+                    say(player, Kind.INFO, "Corner 1 set (${payload.pos.x}, ${payload.pos.z}). Look around and click Corner 2")
                     return
                 }
                 s.corner = null
@@ -185,7 +183,7 @@ object ZoneManager {
         val centerZ = ((zone.minZ + zone.maxZ + 1) * 16) / 2.0
         level.sendParticles(ParticleTypes.END_ROD, centerX, player.y + 1.0, centerZ, 40, 3.0, 1.0, 3.0, 0.1)
 
-        say(player, Kind.OK, "Zone saved: ${zone.width()}x${zone.depth()} chunks (${zone.width() * 16}x${zone.depth() * 16} blocks)")
+        say(player, Kind.OK, "Zone saved & keep-loaded: ${zone.width()}x${zone.depth()} chunks (${zone.width() * 16}x${zone.depth() * 16} blocks)")
     }
 
     private fun removeZones(player: ServerPlayer, level: ServerLevel, pos: BlockPos) {
@@ -217,27 +215,31 @@ object ZoneManager {
 
     private fun collectBoxes(level: ServerLevel, player: ServerPlayer, s: Session): List<WandBox> {
         val py = player.blockPosition().y
-        val y0 = Math.floorDiv(py, 8) * 8 - 8
-        val y1 = y0 + 40
+        val y0 = Math.floorDiv(py, 8) * 8 - 12
+        val y1 = y0 + 48
         val out = ArrayList<WandBox>()
 
-        // 1. Zones المحفوظة باللون الأزرق
-        for (z in load(level)) out.add(zoneBox(0, z, y0, y1))
+        // 1. Saved Zones: إطار أزرق عالي الارتفاع ينشاف بوضوح من بعيد
+        for (z in load(level)) {
+            out.add(zoneBox(0, z, y0, y1))
+        }
 
         val c1 = s.corner
         val pv = s.preview
 
         if (c1 != null) {
-            // رسم مؤشر الزاوية الأولى (Corner 1) أصفر ثابت
-            out.add(WandBox(1, c1.x, c1.y, c1.z, c1.x + 1, c1.y + 1, c1.z + 1))
+            // مؤشر Corner 1: ينرسم كـ عمود أصفر بارز ارتفاعه 10 بلوكات
+            out.add(WandBox(1, c1.x, c1.y - 1, c1.z, c1.x + 1, c1.y + 10, c1.z + 1))
 
             if (pv != null) {
-                // مَد منطقة الـ Chunk Preview بين الزاوية الأولى والبلوكة التي ينظر إليها اللاعب
+                // إظهار معاينة التمديد الأخضر بوضوح بين الزاوية الأولى والبلوكة التي ينظر إليها
                 val zone = Zone.between(c1, pv)
                 out.add(zoneBox(if (sizeError(zone) == null) 2 else 3, zone, y0, y1))
             }
-        } else if (pv != null) {
-            // المربع الأبيض الثابت/النابض على البلوكة المحددة قبل البدء
+        }
+
+        if (pv != null) {
+            // البلوكة التي تحت الـ Crosshair (نوع 4 - النبض الوحيد)
             out.add(WandBox(4, pv.x, pv.y, pv.z, pv.x + 1, pv.y + 1, pv.z + 1))
         }
         return out
@@ -255,13 +257,14 @@ object ZoneManager {
         }
 
         if (s.active && isHolding) {
+            val savedCount = load(level).size
             val statusText = if (s.corner != null && s.preview != null) {
                 val z = Zone.between(s.corner!!, s.preview!!)
-                "⚡ Wand: ACTIVE | Selecting: ${z.width()}x${z.depth()} Chunks (${z.width() * 16}x${z.depth() * 16} Blocks)"
+                "⚡ Wand: ACTIVE | Stretch: ${z.width()}x${z.depth()} Chunks | Active Zones: $savedCount"
             } else if (s.corner != null) {
-                "⚡ Wand: ACTIVE | Corner 1 Set (${s.corner!!.x}, ${s.corner!!.z}) -> Click Corner 2"
+                "⚡ Wand: ACTIVE | Corner 1 Set (${s.corner!!.x}, ${s.corner!!.z}) -> Move & Click Corner 2"
             } else {
-                "⚡ Wand: ACTIVE | Left-Click Corner 1"
+                "⚡ Wand: ACTIVE | Saved Zones: $savedCount"
             }
             sendHud(player, statusText)
         }
