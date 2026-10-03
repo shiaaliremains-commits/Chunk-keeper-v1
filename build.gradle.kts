@@ -3,7 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
 	id("net.fabricmc.fabric-loom")
 	`maven-publish`
-	id("org.jetbrains.kotlin.jvm") version "1.9.22"
+	id("org.jetbrains.kotlin.jvm") version "2.3.0"
 }
 
 repositories {
@@ -38,12 +38,9 @@ dependencies {
 	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 
-	// ربط ModMenu بشكل مباشر لتفادي قيود Gradle 9
-	val modCompileOnly = configurations.findByName("modCompileOnly") ?: configurations.create("modCompileOnly")
-	val modLocalRuntime = configurations.findByName("modLocalRuntime") ?: configurations.create("modLocalRuntime")
-
-	modCompileOnly("com.terraformersmc:modmenu:3.2.5")
-	modLocalRuntime("com.terraformersmc:modmenu:3.2.5")
+	// ModMenu (غيّر النسخة لنسخة تناسب ماينكرافتك من Modrinth)
+	compileOnly("com.terraformersmc:modmenu:3.2.5")
+	runtimeOnly("com.terraformersmc:modmenu:3.2.5")
 }
 
 tasks.processResources {
@@ -56,20 +53,20 @@ tasks.processResources {
 }
 
 tasks.withType<JavaCompile>().configureEach {
-	options.release = 17
+	options.release = 25
 }
 
 kotlin {
 	compilerOptions {
-		jvmTarget = JvmTarget.JVM_17
+		jvmTarget = JvmTarget.JVM_25
 	}
 }
 
 java {
 	withSourcesJar()
 
-	sourceCompatibility = JavaVersion.VERSION_17
-	targetCompatibility = JavaVersion.VERSION_17
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
 }
 
 tasks.jar {
