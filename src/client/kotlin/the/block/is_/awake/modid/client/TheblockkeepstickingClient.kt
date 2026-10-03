@@ -132,7 +132,7 @@ object TheblockkeepstickingClient : ClientModInitializer {
 
             val box = AABB(b.x0 - e, b.y0 - e, b.z0 - e, b.x1 + e, b.y1 + e, b.z1 + e)
 
-            // 1. رسم الإطار الخارجي الملون الصلب
+            // 1. رسم الإطار الخارجي الملون
             Gizmos.cuboid(box, GizmoStyle.stroke(strokeColor)).persistForMillis(100)
 
             // 2. تعبئة داخلية بلون أبيض شفاف ينبض
@@ -150,10 +150,10 @@ object TheblockkeepstickingClient : ClientModInitializer {
         if (activeSelectionBox != null && client.player != null) {
             val b = activeSelectionBox
             val text = Component.literal("§fالتحديد: §e${b.blockCountX}x${b.blockCountZ} §7بلوكة ")
-                .append(Component.literal("§8| §fالمجموع: §a${b.blockCountX * b.blockCountZ} §7بلوكة مسطحة "))
+                .append(Component.literal("§8| §fالمجموع: §a${b.blockCountX * b.blockCountZ} §7بلوكة "))
                 .append(Component.literal("§8(§b${b.blockCountX / 16}x${b.blockCountZ / 16} Chunks§8)"))
 
-            client.player?.displayClientMessage(text, true)
+            client.gui.setOverlayMessage(text, false)
         }
     }
 }
