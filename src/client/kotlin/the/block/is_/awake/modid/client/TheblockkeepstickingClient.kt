@@ -33,7 +33,6 @@ object TheblockkeepstickingClient : ClientModInitializer {
         toggleKey = KeyMappingHelper.registerKeyMapping(
             KeyMapping(
                 "key.theblockkeepsticking.toggle_wand",
-                InputConstants.Type.KEYSYM,
                 InputConstants.KEY_K,
                 category
             )
