@@ -4,17 +4,13 @@ import com.google.gson.GsonBuilder
 import net.fabricmc.loader.api.FabricLoader
 
 /**
- * المسار: src/main/kotlin/the/block/is_/awake/modid/ModConfig.kt  (ملف جديد)
- *
- * ملف الإعدادات: <مجلد اللعبة>/config/theblockkeepsticking.json
- * الوحدة هي Chunk (الـ Chunk الواحد = 16 بلوك).
- * عدل الأرقام في الملف ثم أعد تشغيل اللعبة.
+ * Config file: <game folder>/config/theblockkeepsticking.json
+ * Values are in chunks (1 chunk = 16 blocks).
+ * You can also edit them in-game from Mod Menu.
  */
 object ModConfig {
     private class Data {
-        /** أصغر ضلع للمنطقة (بالـ Chunks). 1 = 16 بلوك */
         var minChunksPerSide: Int = 1
-        /** أكبر ضلع للمنطقة (بالـ Chunks). 5 = 80 بلوك */
         var maxChunksPerSide: Int = 5
     }
 
@@ -24,24 +20,40 @@ object ModConfig {
     val minChunksPerSide: Int get() = data.minChunksPerSide
     val maxChunksPerSide: Int get() = data.maxChunksPerSide
 
+    private fun file() = FabricLoader.getInstance().configDir.resolve("theblockkeepsticking.json").toFile()
+
     fun load() {
-        val file = FabricLoader.getInstance().configDir.resolve("theblockkeepsticking.json").toFile()
+        val f = file()
         try {
-            if (file.exists()) {
-                data = gson.fromJson(file.readText(), Data::class.java) ?: Data()
+            if (f.exists()) {
+                data = gson.fromJson(f.readText(), Data::class.java) ?: Data()
             }
         } catch (e: Exception) {
             Theblockkeepsticking.LOGGER.warn("Could not read config, using defaults", e)
             data = Data()
         }
-        // تصحيح القيم الغلط
         data.minChunksPerSide = data.minChunksPerSide.coerceIn(1, 16)
         data.maxChunksPerSide = data.maxChunksPerSide.coerceIn(data.minChunksPerSide, 16)
+        save()
+    }
+
+    fun save() {
         try {
-            file.parentFile.mkdirs()
-            file.writeText(gson.toJson(data))
+            val f = file()
+            f.parentFile.mkdirs()
+            f.writeText(gson.toJson(data))
         } catch (e: Exception) {
             Theblockkeepsticking.LOGGER.warn("Could not write config", e)
         }
+    }
+
+    fun setMin(v: Int) {
+        data.minChunksPerSide = v.coerceIn(1, 16)
+        if (data.maxChunksPerSide < data.minChunksPerSide) data.maxChunksPerSide = data.minChunksPerSide
+    }
+
+    fun setMax(v: Int) {
+        data.maxChunksPerSide = v.coerceIn(1, 16)
+        if (data.minChunksPerSide > data.maxChunksPerSide) data.minChunksPerSide = data.maxChunksPerSide
     }
 }

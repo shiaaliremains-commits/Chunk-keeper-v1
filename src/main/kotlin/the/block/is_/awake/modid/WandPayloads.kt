@@ -26,6 +26,7 @@ class WandActionPayload(val action: Int, val pos: BlockPos) : CustomPacketPayloa
         const val TOGGLE = 0
         const val SELECT = 1
         const val REMOVE = 2
+        const val PREVIEW = 3
 
         val TYPE: CustomPacketPayload.Type<WandActionPayload> =
             CustomPacketPayload.Type(Identifier.fromNamespaceAndPath(Theblockkeepsticking.MOD_ID, "wand_action"))
