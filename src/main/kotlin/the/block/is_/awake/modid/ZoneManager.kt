@@ -26,7 +26,7 @@ import net.minecraft.world.item.Items
 object ZoneManager {
     /** old particle display, kept as a fallback. Set to true if the frames do not show. */
     private const val USE_PARTICLES = false
-    private const val SYNC_INTERVAL = 5
+    private const val SYNC_INTERVAL = 1 // تسريع التحديث بالسيرفر ليكون كل tick مباشرة
     private const val EDGE_STEP = 2.5
     private const val SHOW_DISTANCE_SQ = 40.0 * 40.0
 
@@ -164,7 +164,11 @@ object ZoneManager {
             }
 
             WandActionPayload.PREVIEW -> {
-                if (s.active && holdingStick(player)) s.preview = payload.pos
+                if (s.active && holdingStick(player)) {
+                    s.preview = payload.pos
+                    // تحديث فوري بدون انتظار السايكل التالية
+                    syncPlayer(server = level.server, player = player, s = s)
+                }
             }
         }
     }
@@ -211,7 +215,7 @@ object ZoneManager {
         val y1 = y0 + 40
         val out = ArrayList<WandBox>()
 
-        // المناطق المحفوظة تبقى تستخدم نظام الجانكات
+        // المناطق المحفوظة باللون الأزرق السماوي
         for (z in load(level)) out.add(zoneBox(0, z, y0, y1))
 
         val c1 = s.corner
@@ -220,7 +224,6 @@ object ZoneManager {
             out.add(WandBox(1, c1.x, c1.y, c1.z, c1.x + 1, c1.y + 1, c1.z + 1))
             if (pv != null) {
                 val zone = Zone.between(c1, pv)
-                // التعديل هنا: يحدد البلوكات المشمولة بشكل مربعي من الزاوية للزاوية بالضبط
                 val minX = minOf(c1.x, pv.x)
                 val minY = minOf(c1.y, pv.y)
                 val minZ = minOf(c1.z, pv.z)
@@ -231,10 +234,19 @@ object ZoneManager {
                 out.add(WandBox(if (sizeError(zone) == null) 2 else 3, minX, minY, minZ, maxX, maxY, maxZ))
             }
         } else if (pv != null) {
-            // بلوكة المعاينة قبل اختيار الزاوية الأولى
             out.add(WandBox(4, pv.x, pv.y, pv.z, pv.x + 1, pv.y + 1, pv.z + 1))
         }
         return out
+    }
+
+    private fun syncPlayer(server: MinecraftServer, player: ServerPlayer, s: Session) {
+        val level = player.level() as ServerLevel
+        val boxes = if (holdingStick(player)) collectBoxes(level, player, s) else emptyList()
+        val text = WandState.encode(boxes)
+        if (text != s.lastSent) {
+            s.lastSent = text
+            ServerPlayNetworking.send(player, WandBoxesPayload(text))
+        }
     }
 
     private fun syncAll(server: MinecraftServer) {
@@ -242,18 +254,7 @@ object ZoneManager {
         for ((uuid, s) in sessions) {
             if (!s.active) continue
             val player = server.playerList.getPlayer(uuid) ?: continue
-            val level = player.level() as ServerLevel
-
-            val boxes = if (holdingStick(player)) collectBoxes(level, player, s) else emptyList()
-            val text = WandState.encode(boxes)
-            if (text != s.lastSent) {
-                s.lastSent = text
-                ServerPlayNetworking.send(player, WandBoxesPayload(text))
-            }
-
-            if (USE_PARTICLES && particleToggle) {
-                for (b in boxes) outlineParticles(level, player, b)
-            }
+            syncPlayer(server, player, s)
         }
     }
 

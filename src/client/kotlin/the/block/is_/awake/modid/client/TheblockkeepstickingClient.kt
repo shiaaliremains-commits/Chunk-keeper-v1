@@ -28,13 +28,12 @@ import kotlin.math.sin
 
 object TheblockkeepstickingClient : ClientModInitializer {
     private lateinit var toggleKey: KeyMapping
-    private var previewTimer = 0
+    private var lastTargetPos: BlockPos? = null
 
     // frame colors (ARGB)
-    private val CYAN = 0xFF00E5FF.toInt()    // saved zone
-    private val YELLOW = 0xFFFFD500.toInt()  // corner block
-    private val GREEN = 0xFF39FF14.toInt()   // preview
-    private val RED = 0xFFFF3030.toInt()     // invalid size
+    private val CYAN = 0xFF00E5FF.toInt()    // Saved Zone
+    private val YELLOW = 0xFFFFD500.toInt()  // Corner 1
+    private val RED = 0xFFFF3030.toInt()     // Invalid Selection
 
     override fun onInitializeClient() {
         val category = KeyMapping.Category.register(
@@ -56,15 +55,16 @@ object TheblockkeepstickingClient : ClientModInitializer {
             }
 
             if (WandState.clientActive) {
-                // tell the server which block we look at (for the live preview)
-                if (++previewTimer >= 4) {
-                    previewTimer = 0
-                    val player = client.player
-                    val hit = client.hitResult
-                    if (player != null && player.mainHandItem.item == Items.STICK &&
-                        hit is BlockHitResult && hit.type == HitResult.Type.BLOCK
-                    ) {
-                        ClientPlayNetworking.send(WandActionPayload(WandActionPayload.PREVIEW, hit.blockPos))
+                val player = client.player
+                val hit = client.hitResult
+                if (player != null && player.mainHandItem.item == Items.STICK &&
+                    hit is BlockHitResult && hit.type == HitResult.Type.BLOCK
+                ) {
+                    val currentPos = hit.blockPos
+                    // إرسال فوري ومباشر أول ما يتغير موقع البلوكة بدون أي تايمر
+                    if (currentPos != lastTargetPos) {
+                        lastTargetPos = currentPos
+                        ClientPlayNetworking.send(WandActionPayload(WandActionPayload.PREVIEW, currentPos))
                     }
                 }
                 drawFrames()
@@ -104,22 +104,22 @@ object TheblockkeepstickingClient : ClientModInitializer {
         }
     }
 
-    /** draws solid colored frames using Minecraft's own debug-line system (same as F3+B hitboxes) */
+    /** draws solid colored frames using Minecraft's own debug-line system */
     private fun drawFrames() {
         val e = 0.004
         val time = System.currentTimeMillis()
-        val pulseAlpha = (100 + 80 * sin(time / 150.0)).toInt()
+        val pulseAlpha = (100 + 80 * sin(time / 120.0)).toInt()
         val PULSING_WHITE = (pulseAlpha shl 24) or 0xFFFFFF
 
         for (b in WandState.boxes) {
             val color = when (b.kind) {
-                0 -> CYAN
-                1 -> YELLOW
-                3 -> RED
-                else -> PULSING_WHITE
+                0 -> CYAN          // المنطقة المحفوظة أصلاً
+                1 -> YELLOW        // الزاوية الأولى المختارة
+                3 -> RED           // حجم غير مسموح
+                else -> PULSING_WHITE // أبيض شفاف ينبض بسرعة وبشكل مباشر للمعاينة
             }
             val box = AABB(b.x0 - e, b.y0 - e, b.z0 - e, b.x1 + e, b.y1 + e, b.z1 + e)
-            Gizmos.cuboid(box, GizmoStyle.stroke(color)).persistForMillis(100)
+            Gizmos.cuboid(box, GizmoStyle.stroke(color)).persistForMillis(50)
         }
     }
 }
