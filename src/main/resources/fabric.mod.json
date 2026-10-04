@@ -3,7 +3,7 @@
 	"id": "theblockkeepsticking",
 	"version": "${version}",
 	"name": "Theblockkeepsticking",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "This is the first mod I ever made; I like coding with Java.",
 	"authors": [
 		"Me!"
 	],
@@ -30,6 +30,12 @@
 		"fabric-datagen": [
 			{
 				"value": "the.block.is_.awake.modid.client.TheblockkeepstickingDataGenerator",
+				"adapter": "kotlin"
+			}
+		],
+		"modmenu": [
+			{
+				"value": "the.block.is_.awake.modid.client.ModMenuIntegration",
 				"adapter": "kotlin"
 			}
 		]
