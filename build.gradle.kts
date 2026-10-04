@@ -11,10 +11,6 @@ repositories {
 		name = "TerraformersMC"
 		url = uri("https://maven.terraformersmc.com/releases/")
 	}
-	maven {
-		name = "Shedaniel"
-		url = uri("https://maven.shedaniel.me/")
-	}
 }
 
 loom {
@@ -39,14 +35,10 @@ dependencies {
 	minecraft("com.mojang:minecraft:${providers.gradleProperty("minecraft_version").get()}")
 	implementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
 
-	implementation("net.fabricmc.fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
+	implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 
-	// Mod Menu & Cloth Config
-	"modImplementation"("com.terraformersmc:modmenu:${providers.gradleProperty("modmenu_version").get()}")
-	"modApi"("me.shedaniel.cloth:cloth-config-fabric:${providers.gradleProperty("cloth_config_version").get()}") {
-		exclude(group = "net.fabricmc.fabric-api")
-	}
+	// ModMenu (غيّر النسخة لنسخة تناسب ماينكرافتك من Modrinth)
 }
 
 tasks.processResources {
