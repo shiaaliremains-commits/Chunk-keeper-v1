@@ -43,8 +43,8 @@ dependencies {
 	implementation("net.fabricmc:fabric-language-kotlin:${providers.gradleProperty("fabric_kotlin_version").get()}")
 
 	// Mod Menu & Cloth Config
-	modImplementation("com.terraformersmc:modmenu:${providers.gradleProperty("modmenu_version").get()}")
-	modApi("me.shedaniel.cloth:cloth-config-fabric:${providers.gradleProperty("cloth_config_version").get()}") {
+	"modImplementation"("com.terraformersmc:modmenu:${providers.gradleProperty("modmenu_version").get()}")
+	"modApi"("me.shedaniel.cloth:cloth-config-fabric:${providers.gradleProperty("cloth_config_version").get()}") {
 		exclude(group = "net.fabricmc.fabric-api")
 	}
 }
