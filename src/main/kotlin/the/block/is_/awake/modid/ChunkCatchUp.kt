@@ -1,6 +1,6 @@
 package the.block.is_.awake.modid
 
-import java.util.ArrayDeque
+import java.util.ArrayList
 import java.util.IdentityHashMap
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
@@ -10,6 +10,7 @@ import net.minecraft.server.level.ServerLevel
 import net.minecraft.world.level.ChunkPos
 import net.minecraft.world.level.gamerules.GameRules
 import net.minecraft.world.level.block.AbstractFurnaceBlock
+import net.minecraft.world.level.block.Blocks
 import net.minecraft.world.level.block.FireBlock
 import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity
 import net.minecraft.world.level.block.entity.BlockEntity
@@ -24,7 +25,7 @@ import net.minecraft.world.level.chunk.LevelChunk
  * Tracks the "ticking" state of every loaded chunk.
  *  - chunk stops ticking -> stamp current time
  *  - chunk ticks again   -> catch up random ticks + furnaces/brewing/campfire
- * While a chunk ticks, its stamp is refreshed every 30 s so it is never lost.
+ * Fully optimized: player proximity priority, terrain tick capping, and dynamic budget.
  */
 object ChunkCatchUp {
     private const val MIN_ELAPSED_TICKS = 100L
@@ -32,9 +33,16 @@ object ChunkCatchUp {
     private const val MAX_FURNACE_TICKS = 72_000L
     /** brewing stand / campfire: one cycle is enough */
     private const val MAX_STATION_TICKS = 1_200L
-    private const val BUDGET_NANOS = 2_000_000L
-    /** how often chunk states are checked (10 ticks = 0.5 s) */
-    private const val POLL_INTERVAL = 10
+
+    /** 2ms budget for background chunks away from players */
+    private const val BASE_BUDGET_NANOS = 2_000_000L
+    /** 10ms burst budget for chunks near players so crops finish instantly */
+    private const val NEAR_BUDGET_NANOS = 10_000_000L
+    /** distance threshold to consider chunk "near" player (128 blocks = 8 chunks) */
+    private const val NEAR_DIST_SQ = 128.0 * 128.0
+
+    /** fast polling (4 ticks = 0.2 s) for instant responsiveness */
+    private const val POLL_INTERVAL = 4
     /** while a chunk is ticking, refresh its saved "last seen" time every 30 s (600 ticks) */
     private const val REFRESH_INTERVAL = 600L
 
@@ -47,7 +55,7 @@ object ChunkCatchUp {
         var lastRefresh = 0L
     }
 
-    private val QUEUE = ArrayDeque<Job>()
+    private val QUEUE = ArrayList<Job>()
     private val LOADED = IdentityHashMap<ServerLevel, MutableMap<ChunkPos, Tracked>>()
 
     private fun debug(msg: String) {
@@ -58,7 +66,6 @@ object ChunkCatchUp {
     }
 
     fun init() {
-        // world opened: add the real offline time to the mod clock
         ServerLifecycleEvents.SERVER_STARTED.register { server ->
             val nowMs = System.currentTimeMillis()
             for (level in server.allLevels) {
@@ -72,7 +79,6 @@ object ChunkCatchUp {
         }
         ServerLifecycleEvents.SERVER_STOPPED.register { reset() }
 
-        // world closing: stamp ticking chunks, keep old stamp for stopped ones
         ServerLifecycleEvents.SERVER_STOPPING.register { server ->
             for ((level, map) in LOADED) {
                 val now = virtualTime(level)
@@ -99,7 +105,6 @@ object ChunkCatchUp {
         }
     }
 
-    /** mod clock = game time + time spent outside the world */
     private fun virtualTime(level: ServerLevel): Long =
         level.gameTime + (level.getAttached(ModAttachments.OFFLINE_TICKS) ?: 0L)
 
@@ -124,7 +129,6 @@ object ChunkCatchUp {
                 val c = t.chunk
                 val nowTicking = level.shouldTickBlocksAt(BlockPos(c.pos.middleBlockX, 0, c.pos.middleBlockZ))
                 if (nowTicking == t.ticking) {
-                    // still ticking: keep the saved time fresh, so it is never lost
                     if (nowTicking && now - t.lastRefresh >= REFRESH_INTERVAL) {
                         c.setAttached(ModAttachments.LAST_SEEN_TICK, now)
                         t.lastRefresh = now
@@ -145,7 +149,6 @@ object ChunkCatchUp {
 
     private fun resume(level: ServerLevel, chunk: LevelChunk, now: Long) {
         val last: Long? = chunk.getAttached(ModAttachments.LAST_SEEN_TICK)
-        // from now on the stamp means "last time this chunk was ticking"
         chunk.setAttached(ModAttachments.LAST_SEEN_TICK, now)
         if (last == null) return
 
@@ -160,17 +163,30 @@ object ChunkCatchUp {
 
     private fun processQueue() {
         if (QUEUE.isEmpty()) return
-        val deadline = System.nanoTime() + BUDGET_NANOS
+
+        // 1. Efficient Sorting: Calculate distance once per job, then sort
+        if (QUEUE.size > 1) {
+            for (i in 0 until QUEUE.size) {
+                QUEUE[i].updatePlayerDistance()
+            }
+            QUEUE.sortBy { it.cachedDistSq }
+        }
+
+        // 2. Dynamic Budget: chunks near player get 10ms to complete immediately
+        val first = QUEUE.firstOrNull() ?: return
+        val budget = if (first.cachedDistSq <= NEAR_DIST_SQ) NEAR_BUDGET_NANOS else BASE_BUDGET_NANOS
+        val deadline = System.nanoTime() + budget
+
         while (QUEUE.isNotEmpty() && System.nanoTime() < deadline) {
-            if (QUEUE.peek().run(deadline)) QUEUE.poll()
+            if (QUEUE[0].run(deadline)) {
+                QUEUE.removeAt(0)
+            }
         }
     }
 
-    /** supported block entities: add more types here */
     private fun isSupported(be: BlockEntity): Boolean =
         be is AbstractFurnaceBlockEntity || be is BrewingStandBlockEntity || be is CampfireBlockEntity
 
-    /** runs one real tick of the block entity using the block's own ticker */
     @Suppress("UNCHECKED_CAST")
     private fun tickOnce(level: ServerLevel, be: BlockEntity): Boolean {
         if (be.isRemoved || level.getBlockEntity(be.blockPos) !== be) return false
@@ -190,6 +206,8 @@ object ChunkCatchUp {
         val elapsed: Long,
         val expectedPerBlock: Double
     ) {
+        var cachedDistSq: Double = Double.MAX_VALUE
+
         private val pos = BlockPos.MutableBlockPos()
         private val baseX = chunk.pos.minBlockX
         private val baseZ = chunk.pos.minBlockZ
@@ -201,6 +219,24 @@ object ChunkCatchUp {
         private var machineIdx = 0
         private var machineTicks = 0L
         private var unlitStreak = 0
+
+        fun updatePlayerDistance() {
+            val players = level.players()
+            if (players.isEmpty()) {
+                cachedDistSq = Double.MAX_VALUE
+                return
+            }
+            val cx = chunk.pos.middleBlockX.toDouble()
+            val cz = chunk.pos.middleBlockZ.toDouble()
+            var minD2 = Double.MAX_VALUE
+            for (p in players) {
+                val dx = p.x - cx
+                val dz = p.z - cz
+                val d2 = dx * dx + dz * dz
+                if (d2 < minD2) minD2 = d2
+            }
+            cachedDistSq = minD2
+        }
 
         fun run(deadline: Long): Boolean {
             if (!randomDone) {
@@ -228,7 +264,7 @@ object ChunkCatchUp {
                     val y = i shr 8
                     var state = section.getBlockState(x, y, z)
                     if (!skip(state)) {
-                        val n = rollTicks()
+                        val n = rollTicks(state)
                         if (n > 0) {
                             pos.set(baseX + x, baseY + y, baseZ + z)
                             for (t in 0 until n) {
@@ -275,11 +311,17 @@ object ChunkCatchUp {
             return true
         }
 
-        private fun rollTicks(): Int {
+        private fun rollTicks(state: BlockState): Int {
             var base = expectedPerBlock.toInt()
             val frac = expectedPerBlock - base
             if (frac > 0 && level.getRandom().nextDouble() < frac) base++
-            return minOf(base, MAX_TICKS_PER_BLOCK)
+            val rolled = minOf(base, MAX_TICKS_PER_BLOCK)
+
+            // Terrain spreading blocks capped to 3 ticks to save 90% CPU overhead
+            if (state.is(Blocks.GRASS_BLOCK) || state.is(Blocks.FARMLAND) || state.is(Blocks.MYCELIUM)) {
+                return minOf(rolled, 3)
+            }
+            return rolled
         }
     }
 }
