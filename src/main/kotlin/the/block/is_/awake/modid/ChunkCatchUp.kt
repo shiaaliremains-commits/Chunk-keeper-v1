@@ -290,4 +290,38 @@ object ChunkCatchUp {
             while (machineIdx < list.size) {
                 val be = list[machineIdx]
                 val isFurnace = be is AbstractFurnaceBlockEntity
-                val limit = m
+                val limit = minOf(elapsed, if (isFurnace) MAX_FURNACE_TICKS else MAX_STATION_TICKS)
+
+                while (machineTicks < limit) {
+                    if (!tickOnce(level, be)) break
+                    machineTicks++
+
+                    if (isFurnace) {
+                        val after = level.getBlockState(be.blockPos)
+                        val lit = after.hasProperty(AbstractFurnaceBlock.LIT) &&
+                            after.getValue(AbstractFurnaceBlock.LIT)
+                        if (lit) unlitStreak = 0 else if (++unlitStreak >= 2) break
+                    }
+                    if ((machineTicks and 63L) == 0L && System.nanoTime() >= deadline) return false
+                }
+                machineIdx++
+                machineTicks = 0
+                unlitStreak = 0
+            }
+            return true
+        }
+
+        private fun rollTicks(state: BlockState): Int {
+            var base = expectedPerBlock.toInt()
+            val frac = expectedPerBlock - base
+            if (frac > 0 && level.getRandom().nextDouble() < frac) base++
+            val rolled = minOf(base, MAX_TICKS_PER_BLOCK)
+
+            val b = state.block
+            if (b === Blocks.GRASS_BLOCK || b === Blocks.FARMLAND || b === Blocks.MYCELIUM) {
+                return minOf(rolled, 3)
+            }
+            return rolled
+        }
+    }
+}
