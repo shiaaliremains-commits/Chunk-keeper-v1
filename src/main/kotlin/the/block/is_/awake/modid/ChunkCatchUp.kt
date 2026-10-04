@@ -24,15 +24,19 @@ import net.minecraft.world.level.chunk.LevelChunk
  * Tracks the "ticking" state of every loaded chunk.
  *  - chunk stops ticking -> stamp current time
  *  - chunk ticks again   -> catch up random ticks + furnaces/brewing/campfire
- * No stamp = chunk is currently ticking.
+ * While a chunk ticks, its stamp is refreshed every 30 s so it is never lost.
  */
 object ChunkCatchUp {
     private const val MIN_ELAPSED_TICKS = 100L
     private const val MAX_TICKS_PER_BLOCK = 256
     private const val MAX_FURNACE_TICKS = 72_000L
+    /** brewing stand / campfire: one cycle is enough */
     private const val MAX_STATION_TICKS = 1_200L
     private const val BUDGET_NANOS = 2_000_000L
+    /** how often chunk states are checked (10 ticks = 0.5 s) */
     private const val POLL_INTERVAL = 10
+    /** while a chunk is ticking, refresh its saved "last seen" time every 30 s (600 ticks) */
+    private const val REFRESH_INTERVAL = 600L
 
     private const val DEBUG = false
     private var debugCount = 0
@@ -40,6 +44,7 @@ object ChunkCatchUp {
 
     private class Tracked(val chunk: LevelChunk) {
         var ticking = false
+        var lastRefresh = 0L
     }
 
     private val QUEUE = ArrayDeque<Job>()
@@ -118,9 +123,19 @@ object ChunkCatchUp {
             for (t in map.values) {
                 val c = t.chunk
                 val nowTicking = level.shouldTickBlocksAt(BlockPos(c.pos.middleBlockX, 0, c.pos.middleBlockZ))
-                if (nowTicking == t.ticking) continue
+                if (nowTicking == t.ticking) {
+                    // still ticking: keep the saved time fresh, so it is never lost
+                    if (nowTicking && now - t.lastRefresh >= REFRESH_INTERVAL) {
+                        c.setAttached(ModAttachments.LAST_SEEN_TICK, now)
+                        t.lastRefresh = now
+                    }
+                    continue
+                }
                 t.ticking = nowTicking
-                if (nowTicking) resume(level, c, now) else {
+                if (nowTicking) {
+                    resume(level, c, now)
+                    t.lastRefresh = now
+                } else {
                     c.setAttached(ModAttachments.LAST_SEEN_TICK, now)
                     debug("stopped ${c.pos} stamp=$now")
                 }
@@ -129,8 +144,10 @@ object ChunkCatchUp {
     }
 
     private fun resume(level: ServerLevel, chunk: LevelChunk, now: Long) {
-        val last: Long = chunk.getAttached(ModAttachments.LAST_SEEN_TICK) ?: return
-        chunk.removeAttached(ModAttachments.LAST_SEEN_TICK)
+        val last: Long? = chunk.getAttached(ModAttachments.LAST_SEEN_TICK)
+        // from now on the stamp means "last time this chunk was ticking"
+        chunk.setAttached(ModAttachments.LAST_SEEN_TICK, now)
+        if (last == null) return
 
         val elapsed = now - last
         if (elapsed < MIN_ELAPSED_TICKS) return
