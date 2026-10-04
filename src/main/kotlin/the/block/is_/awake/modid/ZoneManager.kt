@@ -1,6 +1,7 @@
 package the.block.is_.awake.modid
 
 import java.util.UUID
+import kotlin.math.abs
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry
@@ -16,14 +17,24 @@ import net.minecraft.sounds.SoundEvents
 import net.minecraft.sounds.SoundSource
 import net.minecraft.world.item.Items
 
+/**
+ * Frame kinds sent to the client:
+ *  0 saved zone (chunk frame)      1 corner-1 pillar
+ *  2 chunks kept loaded (valid)    3 chunks kept loaded (invalid size)
+ *  4 hovered block                 5 exact selection (corner 1 -> looked block)
+ *  6 flash over the exact selection right after saving
+ */
 object ZoneManager {
     private const val SYNC_INTERVAL = 1
+    private const val FLASH_TICKS = 60L
 
     private class Session {
         var active = false
         var corner: BlockPos? = null
         var preview: BlockPos? = null
         var lastSent = ""
+        var flashBox: WandBox? = null
+        var flashUntil = 0L
     }
 
     private data class Zone(val minX: Int, val minZ: Int, val maxX: Int, val maxZ: Int) {
@@ -81,8 +92,6 @@ object ZoneManager {
 
     private fun sendHud(player: ServerPlayer, text: String) {
         val msg = Component.literal(text).withStyle(ChatFormatting.AQUA, ChatFormatting.BOLD)
-            .append(Component.literal(" | ").withStyle(ChatFormatting.GRAY))
-            .append(Component.literal("Forceload ACTIVE").withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD))
         player.sendSystemMessage(msg, true)
     }
 
@@ -121,6 +130,7 @@ object ZoneManager {
                 s.corner = null
                 s.preview = null
                 s.lastSent = ""
+                s.flashBox = null
                 ServerPlayNetworking.send(player, WandStatePayload(s.active))
                 if (s.active) {
                     level.playSound(null, player.blockPosition(), SoundEvents.EXPERIENCE_ORB_PICKUP, SoundSource.PLAYERS, 0.8f, 1.2f)
@@ -144,7 +154,7 @@ object ZoneManager {
                     return
                 }
                 s.corner = null
-                createZone(player, level, first, payload.pos)
+                createZone(player, level, s, first, payload.pos)
             }
 
             WandActionPayload.REMOVE -> {
@@ -158,13 +168,19 @@ object ZoneManager {
             WandActionPayload.PREVIEW -> {
                 if (s.active && holdingStick(player)) {
                     s.preview = payload.pos
-                    syncPlayer(server = level.server, player = player, s = s)
+                    syncPlayer(player, s)
                 }
             }
         }
     }
 
-    private fun createZone(player: ServerPlayer, level: ServerLevel, a: BlockPos, b: BlockPos) {
+    private fun exactBox(kind: Int, a: BlockPos, b: BlockPos) = WandBox(
+        kind,
+        minOf(a.x, b.x), minOf(a.y, b.y), minOf(a.z, b.z),
+        maxOf(a.x, b.x) + 1, maxOf(a.y, b.y) + 1, maxOf(a.z, b.z) + 1
+    )
+
+    private fun createZone(player: ServerPlayer, level: ServerLevel, s: Session, a: BlockPos, b: BlockPos) {
         val zone = Zone.between(a, b)
         val error = sizeError(zone)
         if (error != null) {
@@ -174,7 +190,11 @@ object ZoneManager {
         }
         save(level, load(level) + zone)
         for (x in zone.minX..zone.maxX) for (z in zone.minZ..zone.maxZ) level.setChunkForced(x, z, true)
-        
+
+        // white pulse from corner 1 to corner 2
+        s.flashBox = exactBox(6, a, b)
+        s.flashUntil = level.gameTime + FLASH_TICKS
+
         level.playSound(null, player.blockPosition(), SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.PLAYERS, 1.0f, 1.2f)
         val centerX = ((zone.minX + zone.maxX + 1) * 16) / 2.0
         val centerZ = ((zone.minZ + zone.maxZ + 1) * 16) / 2.0
@@ -216,58 +236,67 @@ object ZoneManager {
         val y1 = y0 + 48
         val out = ArrayList<WandBox>()
 
-        for (z in load(level)) {
-            out.add(zoneBox(0, z, y0, y1))
-        }
+        for (z in load(level)) out.add(zoneBox(0, z, y0, y1))
 
         val c1 = s.corner
         val pv = s.preview
 
         if (c1 != null) {
             out.add(WandBox(1, c1.x, c1.y - 1, c1.z, c1.x + 1, c1.y + 10, c1.z + 1))
-
             if (pv != null) {
+                // chunks that will stay loaded (outline only) + the exact blocks you selected
                 val zone = Zone.between(c1, pv)
                 out.add(zoneBox(if (sizeError(zone) == null) 2 else 3, zone, y0, y1))
+                out.add(exactBox(5, c1, pv))
             }
+        } else if (pv != null) {
+            out.add(WandBox(4, pv.x, pv.y, pv.z, pv.x + 1, pv.y + 1, pv.z + 1))
         }
 
-        if (pv != null) {
-            out.add(WandBox(4, pv.x, pv.y, pv.z, pv.x + 1, pv.y + 1, pv.z + 1))
+        val flash = s.flashBox
+        if (flash != null) {
+            if (level.gameTime < s.flashUntil) out.add(flash) else s.flashBox = null
         }
         return out
     }
 
-    private fun syncPlayer(server: MinecraftServer, player: ServerPlayer, s: Session) {
+    private fun hudText(level: ServerLevel, s: Session): String {
+        val savedCount = load(level).size
+        val a = s.corner
+        val b = s.preview
+        if (a != null && b != null) {
+            val dx = abs(a.x - b.x) + 1
+            val dy = abs(a.y - b.y) + 1
+            val dz = abs(a.z - b.z) + 1
+            val total = dx.toLong() * dy * dz
+            val zone = Zone.between(a, b)
+            val err = sizeError(zone)
+            val base = "Selection ${dx}x${dy}x${dz} = $total blocks | ${zone.width()}x${zone.depth()} chunks stay loaded"
+            return if (err == null) base else "$base | $err"
+        }
+        if (a != null) return "Corner 1 set (${a.x}, ${a.y}, ${a.z}) | look at the opposite corner and click"
+        return "Wand ON | saved zones: $savedCount"
+    }
+
+    private fun syncPlayer(player: ServerPlayer, s: Session) {
         val level = player.level() as ServerLevel
         val isHolding = holdingStick(player)
         val boxes = if (isHolding) collectBoxes(level, player, s) else emptyList()
         val text = WandState.encode(boxes)
-        
+
         if (text != s.lastSent) {
             s.lastSent = text
             ServerPlayNetworking.send(player, WandBoxesPayload(text))
         }
 
-        if (s.active && isHolding) {
-            val savedCount = load(level).size
-            val statusText = if (s.corner != null && s.preview != null) {
-                val z = Zone.between(s.corner!!, s.preview!!)
-                "⚡ Wand: ACTIVE | Stretch: ${z.width()}x${z.depth()} Chunks | Active Zones: $savedCount"
-            } else if (s.corner != null) {
-                "⚡ Wand: ACTIVE | Corner 1 Set (${s.corner!!.x}, ${s.corner!!.z}) -> Move & Click Corner 2"
-            } else {
-                "⚡ Wand: ACTIVE | Saved Zones: $savedCount"
-            }
-            sendHud(player, statusText)
-        }
+        if (s.active && isHolding) sendHud(player, hudText(level, s))
     }
 
     private fun syncAll(server: MinecraftServer) {
         for ((uuid, s) in sessions) {
             if (!s.active) continue
             val player = server.playerList.getPlayer(uuid) ?: continue
-            syncPlayer(server, player, s)
+            syncPlayer(player, s)
         }
     }
 }
